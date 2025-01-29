@@ -1,0 +1,39 @@
+import tkinter as tk
+from tkinter import ttk
+from main import update_simulation_param, SIM_PARAMS_DEFAULTS, create_shm_params
+
+def control_panel():
+    """
+    Tkinter control panel for adjusting simulation parameters dynamically.
+    """
+
+    def update_param(param_name):
+        """
+        Returns a function that updates the shared memory with the new parameter value.
+        """
+        return lambda val: update_simulation_param(param_name, float(val), create_shm_params())
+
+    root = tk.Tk()
+    root.geometry("300x600")
+    root.title("Simulation Parameters")
+
+    sliders = {}  # Dictionary to store slider references
+
+    for param_name, default_value in SIM_PARAMS_DEFAULTS.items():
+
+        if param_name in ["mouse_x", "mouse_y"]:
+            break
+
+        ttk.Label(root, text=param_name.replace("_", " ").title()).pack(pady=5)
+        slider = ttk.Scale(
+            root,
+            from_=1 if isinstance(default_value, int) else 0.01,  # Adjust min value
+            to=10 if "iterations" not in param_name else 100,  # Higher max for iterations
+            orient="horizontal",
+            command=update_param(param_name),
+        )
+        slider.set(default_value)
+        slider.pack(pady=5)
+        sliders[param_name] = slider  # Store the slider reference
+
+    root.mainloop()
