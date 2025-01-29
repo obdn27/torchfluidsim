@@ -1,9 +1,9 @@
 import torch
 import numpy as np
+import torch.nn.functional as F
 
-import torch
 
-def interaction_step(frame, interaction_radius, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt, decay_rate):
+def interaction_step(frame, interaction_radius, interaction_strength, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt, decay_rate):
     """
     Implements the AddMouseVelocityAndAdvection kernel in PyTorch.
 
@@ -41,18 +41,16 @@ def interaction_step(frame, interaction_radius, mouse_x, mouse_y, grid_resolutio
     falloff = (1.0 - (distance / interaction_radius)).clamp(min=0)
     falloff = falloff * mask.float()  # Ensure zero outside radius
 
-    density, x_vel, y_vel = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2]
+    density, x_vel, y_vel, divergence, pressure = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2], frame[:, :, 3], frame[:, :, 4]
 
     x_vel = x_vel + (mouse_acceleration[0] * falloff)
     y_vel = y_vel + (mouse_acceleration[1] * falloff)
 
-    density += (100.0 * falloff * dt)
+    density += (100.0 * falloff * dt) * interaction_strength
 
-    density *= decay_rate
+    updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure], dim=-1)
 
-    updated_frame = torch.stack([density, x_vel, y_vel], dim=-1)
-
-    return updated_frame
+    return updated_frame * decay_rate
 
 
 def bilinear_interpolation(field, x, y):
@@ -108,19 +106,75 @@ def advection_step(frame, dt, grid_resolution):
         indexing='ij',
     )
 
-    density, x_vel, y_vel = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2]
+    density, x_vel, y_vel, divergence, pressure = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2], frame[:, :, 3], frame[:, :, 4]
 
+    # Compute backtracked positions
     backtracked_x = posx - dt * x_vel
     backtracked_y = posy - dt * y_vel
-    backtracked_x = torch.clamp(backtracked_x, 0.5, width - 1.5)
-    backtracked_y = torch.clamp(backtracked_y, 0.5, height - 1.5)
+    backtracked_x = torch.clamp(backtracked_x / (width - 1) * 2 - 1, -1, 1)
+    backtracked_y = torch.clamp(backtracked_y / (height - 1) * 2 - 1, -1, 1)
 
-    advected_density = bilinear_interpolation(density, backtracked_x, backtracked_y)
-    advected_x_vel = bilinear_interpolation(x_vel, backtracked_x, backtracked_y)
-    advected_y_vel = bilinear_interpolation(y_vel, backtracked_x, backtracked_y)
+    # Stack grid positions into a format suitable for grid_sample
+    grid = torch.stack([backtracked_x, backtracked_y], dim=-1).unsqueeze(0)  # (1, H, W, 2)
 
-    advected_frame = torch.stack([advected_density, advected_x_vel, advected_y_vel], dim=-1)
+    # Perform interpolation
+    advected_density = F.grid_sample(density.unsqueeze(0).unsqueeze(0), grid, mode='bilinear', align_corners=True).squeeze()
+    advected_x_vel = F.grid_sample(x_vel.unsqueeze(0).unsqueeze(0), grid, mode='bilinear', align_corners=True).squeeze()
+    advected_y_vel = F.grid_sample(y_vel.unsqueeze(0).unsqueeze(0), grid, mode='bilinear', align_corners=True).squeeze()
+
+    advected_frame = torch.stack([advected_density, advected_x_vel, advected_y_vel, divergence, pressure], dim=-1)
 
     return advected_frame
 
 
+def diffuse_step(frame, viscosity, diffusion_coeff, dt, iterations=20):
+    """
+    Uses Gauss-Seidel iterations to diffuse velocity and density fields.
+    """
+
+    for _ in range(int(int(iterations))):
+        up = torch.roll(frame, -1, dims=0)
+        down = torch.roll(frame, 1, dims=0)
+        left = torch.roll(frame, -1, dims=1)
+        right = torch.roll(frame, 1, dims=1)
+
+        avg = (up + down + left + right) / 4
+
+        frame[:, :, 0] += (avg[:, :, 0] - frame[:, :, 0]) * (1 - torch.exp(-diffusion_coeff * dt))
+        frame[:, :, 1:3] += (avg[:, :, 1:3] - frame[:, :, 1:3]) * (1 - torch.exp(-viscosity * dt))
+
+    return frame
+
+
+def pressure_solve_step(frame, iterations=40):
+    """
+    Iteratively solves for pressure using the Poisson equation.
+    """
+
+    for _ in range(int(int(iterations))):
+        divergence = frame[:, :, 3]
+        pressure = frame[:, :, 4]
+
+        up = torch.roll(pressure, -1, dims=0)
+        down = torch.roll(pressure, 1, dims=0)
+        left = torch.roll(pressure, -1, dims=1)
+        right = torch.roll(pressure, 1, dims=1)
+
+        frame[:, :, 4] = (up + down + left + right - divergence) / 4
+
+    return frame
+
+
+def correction_step(frame):
+
+    pressure = frame[:, :, 4]
+
+    up = torch.roll(pressure, -1, dims=0)
+    down = torch.roll(pressure, 1, dims=0)
+    left = torch.roll(pressure, -1, dims=1)
+    right = torch.roll(pressure, 1, dims=1)
+
+    frame[:, :, 1] -= 0.5 * (right - left)
+    frame[:, :, 2] -= 0.5 * (up - down)
+
+    return frame

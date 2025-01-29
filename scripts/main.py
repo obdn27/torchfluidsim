@@ -64,7 +64,7 @@ def visualisation_thread():
 
     last_mouse_Y, last_mouse_X = 0, 0
 
-    colormap = plt.cm.viridis
+    colormap = plt.cm.Reds
 
     running = True
     while running:
