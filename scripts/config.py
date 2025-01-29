@@ -11,6 +11,8 @@ SIM_PARAMS = {
     "density_scaling": 7,
     "mouse_x": 8,
     "mouse_y": 9,
+    "dx": 10,
+    "dy": 11,
 }
 
 SIM_PARAMS_DEFAULTS = {
@@ -24,6 +26,8 @@ SIM_PARAMS_DEFAULTS = {
     "density_scaling": (1, 0.1, 5),
     "mouse_x": (0, 0, 0),
     "mouse_y": (0, 0, 0),
+    "dx": (0, 0, 0),
+    "dy": (0, 0, 0),
 }
 
 SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1

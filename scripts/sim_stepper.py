@@ -1,58 +1,78 @@
 from multiprocessing import shared_memory
 import time
-import numpy as np
 import torch
 from config import *
 import solvers
+import numpy as np
+import time
 
 print("SIM_STEPPER STARTED", __name__)
 
 def step_simulation(current_frame, frame_number, params, grid_resolution):
     """
-    Generates a pattern and masks out a circular region around (mouse_x, mouse_y).
+    Steps the current simulation state forward 1 tick/frame.
+    Uses PyTorch tensors instead of NumPy.
     """
-    mouse_x, mouse_y = params[SIM_PARAMS["mouse_x"]], params[SIM_PARAMS["mouse_y"]]
-    interaction_radius = params[SIM_PARAMS["interaction_radius"]]
 
-    height, width = grid_resolution
-    y = torch.linspace(0, height - 1, steps=height).view(-1, 1).expand(height, width)
-    x = torch.linspace(0, width - 1, steps=width).expand(height, width)
+    frame = solvers.interaction_step(
+        frame=current_frame,
+        interaction_radius=params[SIM_PARAMS["interaction_radius"]],
+        mouse_x=params[SIM_PARAMS["mouse_x"]],
+        mouse_y=params[SIM_PARAMS["mouse_y"]],
+        grid_resolution=grid_resolution,
+        window_res=WINDOW_RES,
+        mouse_acceleration=(params[SIM_PARAMS["dx"]], params[SIM_PARAMS["dy"]]),
+        dt=params[SIM_PARAMS["simulation_speed"]],
+        decay_rate=params[SIM_PARAMS["damping"]],
+    )
 
-    norm_mouse_x = (mouse_x / WINDOW_RES[0]) * width
-    norm_mouse_y = (mouse_y / WINDOW_RES[1]) * height
+    frame = solvers.advection_step(
+        frame=frame,
+        dt=params[SIM_PARAMS["simulation_speed"]],
+        grid_resolution=grid_resolution,
+    )
 
-    distance = torch.sqrt((x - norm_mouse_x) ** 2 + (y - norm_mouse_y) ** 2)
-    mask = distance <= interaction_radius  # Boolean mask (1 inside, 0 outside)
-
-    ripple = torch.sin(10 * torch.sqrt(x**2 + y**2) - frame_number * 0.1) * 0.5 + 0.5
-    sine_wave = torch.sin(2 * torch.pi * (x + frame_number * 0.01)) * 0.5 + 0.5
-    gradient = (x + y) * 0.5 + 0.5
-    pattern = (ripple * 0.5 + sine_wave * 0.3 + gradient * 0.2).clamp(0, 1)
-
-    pattern[mask] = 0.0
-
-    return pattern
+    return frame
 
 
 def sim_stepper(grid_resolution):
-    shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    buffer = np.ndarray(grid_resolution, dtype=np.float32, buffer=shm.buf)
+    """
+    Runs the simulation stepper, using PyTorch tensors for computations.
+    Writes only the density field (single-channel) to shared memory for visualization.
+    """
 
+    # Attach to shared memory for the 1-channel visualization buffer
+    vis_shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
+    vis_buffer_np = np.ndarray(grid_resolution, dtype=np.float32, buffer=vis_shm.buf)
+    vis_buffer = torch.from_numpy(vis_buffer_np).to('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Attach to shared memory for parameters
     params_shm = shared_memory.SharedMemory(name=PARAMS_BUFFER_NAME)
-    params_buffer = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=params_shm.buf)
+    params_np = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=params_shm.buf)
+    params_buffer = torch.from_numpy(params_np).to('cuda' if torch.cuda.is_available() else 'cpu')
 
-    current_frame = np.zeros(grid_resolution)
+    # Store full 3-channel frame (Density, X-Velocity, Y-Velocity)
+    current_frame = torch.zeros((*grid_resolution, 3), dtype=torch.float32, device=vis_buffer.device)
 
     frame_number = 0
 
+    lasttime = time.time()
+
     while True:
         next_frame = step_simulation(current_frame, frame_number, params_buffer, grid_resolution)
-        np.copyto(buffer, next_frame.numpy())
+
+        vis_buffer.copy_(next_frame[:, :, 0])  # Copy only the first channel (Density)
 
         frame_number += 10 * params_buffer[SIM_PARAMS["simulation_speed"]]
+
         time.sleep(1 / FPS)
 
-        current_frame = next_frame
+        current_frame = next_frame.clone()
+
+        currenttime = time.time()
+
+        print(f"{(currenttime - lasttime) * 1000:.2f}ms")
+        lasttime = currenttime
 
 if __name__ == "__main__":
     sim_stepper(GRID_RESOLUTION)

@@ -1,4 +1,5 @@
 from multiprocessing import shared_memory
+from matplotlib import pyplot as plt
 import numpy as np
 import threading
 import subprocess
@@ -61,6 +62,10 @@ def visualisation_thread():
     screen = pygame.display.set_mode(WINDOW_RES)
     pygame.display.set_caption("Simulation visualisation")
 
+    last_mouse_Y, last_mouse_X = 0, 0
+
+    colormap = plt.cm.viridis
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -68,15 +73,30 @@ def visualisation_thread():
                 running = False
 
         mouse_Y, mouse_X = pygame.mouse.get_pos()
+        dy, dx = mouse_Y - last_mouse_Y, mouse_X - last_mouse_X
 
         update_simulation_param("mouse_x", mouse_X, shm_params)
         update_simulation_param("mouse_y", mouse_Y, shm_params)
+        update_simulation_param("dx", dx, shm_params)
+        update_simulation_param("dy", dy, shm_params)
 
         data = buffer.copy()
-        surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
-        screen.blit(pygame.transform.scale(surface, WINDOW_RES), (0, 0))
 
+        def normalize_array(arr):
+            min_val = np.min(arr)
+            max_val = np.max(arr)
+            return (arr - min_val) / (max_val - min_val) if max_val > min_val else np.zeros_like(arr)
+
+        data = normalize_array(buffer.copy())
+
+        data = colormap(data)[:, :, :-1]
+
+        surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
+
+        screen.blit(pygame.transform.scale(surface, WINDOW_RES), (0, 0))
         pygame.display.flip()
+
+        last_mouse_X, last_mouse_Y = mouse_X, mouse_Y
 
     pygame.quit()
     shm.close()
