@@ -19,7 +19,7 @@ SIM_PARAMS_DEFAULTS = {
     "viscosity": (0.1, 0, 2.5),
     "diffusion_rate": (1, 0.01, 5),
     "damping": (1 - 1e-2, 0.9, 1),
-    "simulation_speed": (1, 0.05, 10),
+    "simulation_speed": (0.3, 0.005, 2),
     "solver_iterations": (10, 1, 75),
     "density_scaling": (1, 0.1, 5),
     "mouse_x": (0, 0, 0),
@@ -31,7 +31,11 @@ SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
 FIELDS_BUFFER_NAME = "fields_buffer"
 PARAMS_BUFFER_NAME = "params_buffer"
 
-GRID_RESOLUTION = (1024, 1024)
+GRID_RESOLUTION = (768, 768)
 WINDOW_RES = (768, 768)
 
 SIM_STEPPER_LOC = "\\scripts\\sim_stepper.py"
+GRAPHER_LOC = "\\scripts\\timeseries_grapher.py"
+
+FPS = 60
+MAX_DATA_LEN = 60

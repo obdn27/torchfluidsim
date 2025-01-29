@@ -67,7 +67,8 @@ def visualisation_thread():
             if event.type == pygame.QUIT:
                 running = False
 
-        mouse_X, mouse_Y = pygame.mouse.get_pos()
+        mouse_Y, mouse_X = pygame.mouse.get_pos()
+
         update_simulation_param("mouse_x", mouse_X, shm_params)
         update_simulation_param("mouse_y", mouse_Y, shm_params)
 
@@ -88,6 +89,15 @@ def launch_sim_stepper():
 
     python_executable = sys.executable
     return subprocess.Popen([python_executable, os.getcwd() + SIM_STEPPER_LOC])
+
+
+def launch_grapher():
+    """
+    Launches the timeseries_grapher.py script as a separate process
+    """
+
+    python_executable = sys.executable
+    return subprocess.Popen([python_executable, os.getcwd() + GRAPHER_LOC])
 
 
 def create_shm_params():
@@ -112,6 +122,7 @@ if __name__ == "__main__":
         shm_params = create_shm_params()
 
     sim_stepper_process = launch_sim_stepper()
+    # grapher_process = launch_grapher()
 
     vis_thread = threading.Thread(target=visualisation_thread)
     vis_thread.start()
@@ -123,6 +134,7 @@ if __name__ == "__main__":
     finally:
         vis_thread.join()
         sim_stepper_process.terminate()
+        # grapher_process.terminate()
         destroy_shared_memory(fields_shm)
         destroy_shared_memory(shm_params)
         print("Simulation stopped, subprocess terminated, and shared memory released.")
