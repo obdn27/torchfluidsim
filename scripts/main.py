@@ -5,42 +5,8 @@ import subprocess
 import sys
 import os
 import pygame
-import params_window
 
-# CONSTANTS
-GRID_RESOLUTION = (1024, 1024)
-WINDOW_RES = (768, 768)
-FIELDS_BUFFER_NAME = "fields_buffer"
-PARAMS_BUFFER_NAME = "params_buffer"
-SIM_STEPPER_LOC = "\\scripts\\sim_stepper.py"
-
-SIM_PARAMS = {
-    "interaction_strength": 0,
-    "interaction_radius": 1,
-    "viscosity": 2,
-    "diffusion_rate": 3,
-    "damping": 4,
-    "simulation_speed": 5,
-    "solver_iterations": 6,
-    "density_scaling": 7,
-    "mouse_x": 8,
-    "mouse_y": 9,
-}
-
-SIM_PARAMS_DEFAULTS = {
-    "interaction_strength": 0,
-    "interaction_radius": 1,
-    "viscosity": 0.1,
-    "diffusion_rate": 1,
-    "damping": (1 - 1e-2),
-    "simulation_speed": 1,
-    "solver_iterations": 10,
-    "density_scaling": 1,
-    "mouse_x": 0,
-    "mouse_y": 0,
-}
-
-SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
+from config import *
 
 
 # METHODS
@@ -137,6 +103,9 @@ def create_shm_params():
 shm_params = None
 
 if __name__ == "__main__":
+
+    import params_window
+
     fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4))
     
     if not shm_params:

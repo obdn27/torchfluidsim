@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
-from main import update_simulation_param, SIM_PARAMS_DEFAULTS, create_shm_params
+from main import update_simulation_param, create_shm_params
+from config import *
 
 def control_panel():
     """
@@ -19,7 +20,7 @@ def control_panel():
 
     sliders = {}  # Dictionary to store slider references
 
-    for param_name, default_value in SIM_PARAMS_DEFAULTS.items():
+    for param_name, (default_value, min_, max_) in SIM_PARAMS_DEFAULTS.items():
 
         if param_name in ["mouse_x", "mouse_y"]:
             break
@@ -27,8 +28,8 @@ def control_panel():
         ttk.Label(root, text=param_name.replace("_", " ").title()).pack(pady=5)
         slider = ttk.Scale(
             root,
-            from_=1 if isinstance(default_value, int) else 0.01,  # Adjust min value
-            to=10 if "iterations" not in param_name else 100,  # Higher max for iterations
+            from_=min_,
+            to=max_,
             orient="horizontal",
             command=update_param(param_name),
         )
