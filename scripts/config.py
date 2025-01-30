@@ -14,6 +14,8 @@ SIM_PARAMS = {
     "dx": 10,
     "dy": 11,
     "vorticity_strength": 12,
+    "reset_request": 13,
+    "over_relaxation": 14,
 }
 
 SIM_PARAMS_DEFAULTS = {
@@ -30,6 +32,8 @@ SIM_PARAMS_DEFAULTS = {
     "dx": (0, 0, 0),
     "dy": (0, 0, 0),
     "vorticity_strength": (0.5, 0.05, 1.5),
+    "reset_request": (0.0, 0.0, 0.0),
+    "over_relaxation": (1.0, 0.1, 2.3),
 }
 
 SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
@@ -37,7 +41,7 @@ SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
 FIELDS_BUFFER_NAME = "fields_buffer"
 PARAMS_BUFFER_NAME = "params_buffer"
 
-BASE_RES = 384
+BASE_RES = 512
 WINDOW_MULTIPLIER = 2
 
 GRID_RESOLUTION = (BASE_RES, BASE_RES)

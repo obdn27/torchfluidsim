@@ -8,7 +8,7 @@ import time
 
 print("SIM_STEPPER STARTED", __name__)
 
-def step_simulation(current_frame, frame_number, params, grid_resolution):
+def step_simulation(current_frame, params, grid_resolution):
     """
     Steps the current simulation state forward 1 tick/frame.
     Uses PyTorch tensors instead of NumPy.
@@ -18,6 +18,7 @@ def step_simulation(current_frame, frame_number, params, grid_resolution):
         frame=current_frame,
         interaction_radius=params[SIM_PARAMS["interaction_radius"]],
         interaction_strength=params[SIM_PARAMS["interaction_strength"]],
+        reset_request=params[SIM_PARAMS["reset_request"]],
         mouse_x=params[SIM_PARAMS["mouse_x"]],
         mouse_y=params[SIM_PARAMS["mouse_y"]],
         grid_resolution=grid_resolution,
@@ -33,26 +34,10 @@ def step_simulation(current_frame, frame_number, params, grid_resolution):
         grid_resolution=grid_resolution,
     )
 
-    # frame = solvers.diffuse_step(
-    #     frame=frame,
-    #     viscosity=params[SIM_PARAMS["viscosity"]],
-    #     diffusion_coeff=params[SIM_PARAMS["diffusion_rate"]],
-    #     dt=params[SIM_PARAMS["simulation_speed"]],
-    #     iterations=params[SIM_PARAMS["solver_iterations"]],
-    # )
-
-    # frame = solvers.pressure_solve_step(
-    #     frame=frame,
-    #     iterations=params[SIM_PARAMS["solver_iterations"]],
-    # )
-
-    # frame = solvers.correction_step(
-    #     frame=frame,
-    # )
-
-    frame = solvers.divergence_removal(
+    frame = solvers.projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
+        over_relaxation=params[SIM_PARAMS["over_relaxation"]],
     )
 
     return frame
@@ -80,7 +65,7 @@ def sim_stepper(grid_resolution):
     lasttime = time.time()
 
     while True:
-        next_frame = step_simulation(current_frame, frame_number, params_buffer, grid_resolution)
+        next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
 
         vis_buffer.copy_(next_frame[..., 0])  # Copy only the first channel (Density)
 

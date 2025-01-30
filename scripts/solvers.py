@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 
 
-def interaction_step(frame, interaction_radius, interaction_strength, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt, decay_rate):
+def interaction_step(frame, interaction_radius, interaction_strength, reset_request, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt, decay_rate):
     """
     Implements the AddMouseVelocityAndAdvection kernel in PyTorch.
 
@@ -50,7 +50,7 @@ def interaction_step(frame, interaction_radius, interaction_strength, mouse_x, m
 
     updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure], dim=-1)
 
-    return updated_frame * decay_rate
+    return updated_frame * decay_rate * reset_request
 
 
 def bilinear_interpolation(field, x, y):
@@ -237,8 +237,6 @@ def solve_pressure(pressure, divergence, iterations):
         )
     
     return pressure
-    
-    return pressure
 
 
 def divergence_removal(frame, iterations):
@@ -278,3 +276,62 @@ def divergence_removal(frame, iterations):
         frame[..., 1:3] = velocity
 
     return frame
+
+
+def projection_step(frame, iterations=40, over_relaxation=1.0, velocity_clamp=50.0):
+    """
+    Enforces incompressibility using a collocated grid (pressure & velocity at the same location).
+
+    Args:
+    - frame (torch.Tensor): The simulation state tensor of shape (H, W, 5).
+    - iterations (int): Number of iterations for solving pressure.
+    - over_relaxation (float): Factor to speed up convergence.
+    - velocity_clamp (float): Maximum allowable velocity magnitude.
+
+    Returns:
+    - frame (torch.Tensor): Updated frame with corrected velocity field.
+    """
+
+    H, W = frame.shape[:2]
+
+    # Extract velocity components (stored at the same cell centers)
+    u = frame[:, :, 1]  # x-velocity
+    v = frame[:, :, 2]  # y-velocity
+
+    # Compute divergence: div(U) = d(u)/dx + d(v)/dy (collocated grid)
+    div = (
+        (torch.roll(u, shifts=-1, dims=1) - torch.roll(u, shifts=1, dims=1)) / 2 +
+        (torch.roll(v, shifts=-1, dims=0) - torch.roll(v, shifts=1, dims=0)) / 2
+    )
+
+    # Solve for pressure using Jacobi iterations
+    pressure = torch.zeros_like(div, device=frame.device)
+
+    for _ in range(int(int(iterations))):  # More iterations for better convergence
+        pressure = 0.25 * (
+            torch.roll(pressure, shifts=1, dims=0) +
+            torch.roll(pressure, shifts=-1, dims=0) +
+            torch.roll(pressure, shifts=1, dims=1) +
+            torch.roll(pressure, shifts=-1, dims=1) -
+            div
+        )
+    
+    # Apply over-relaxation (but keep it low for stability)
+    # pressure *= min(over_relaxation, 1.2)
+    pressure *= over_relaxation
+
+    # Apply pressure gradient correction to velocity (collocated grid)
+    u -= (torch.roll(pressure, shifts=-1, dims=1) - torch.roll(pressure, shifts=1, dims=1)) / 2
+    v -= (torch.roll(pressure, shifts=-1, dims=0) - torch.roll(pressure, shifts=1, dims=0)) / 2
+
+    # CLAMP VELOCITIES TO PREVENT INSTABILITY 🚀
+    u = torch.clamp(u, -velocity_clamp, velocity_clamp)
+    v = torch.clamp(v, -velocity_clamp, velocity_clamp)
+
+    # Store the updated values
+    frame[:, :, 1] = u
+    frame[:, :, 2] = v
+    frame[:, :, 4] = pressure  # Store pressure for reference
+
+    return frame
+

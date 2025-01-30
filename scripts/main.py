@@ -66,11 +66,15 @@ def visualisation_thread():
 
     colormap = plt.cm.Reds
 
+    reset = 1
+
     running = True
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN:
+                reset = 0
 
         mouse_Y, mouse_X = pygame.mouse.get_pos()
         dy, dx = mouse_Y - last_mouse_Y, mouse_X - last_mouse_X
@@ -79,6 +83,9 @@ def visualisation_thread():
         update_simulation_param("mouse_y", mouse_Y, shm_params)
         update_simulation_param("dx", dx, shm_params)
         update_simulation_param("dy", dy, shm_params)
+        update_simulation_param("reset_request", reset, shm_params)
+
+        reset = 1
 
         data = buffer.copy()
 
