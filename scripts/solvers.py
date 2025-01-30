@@ -178,3 +178,103 @@ def correction_step(frame):
     frame[:, :, 2] -= 0.5 * (up - down)
 
     return frame
+
+
+def vorticity_confinement_step(frame, vorticity_strength=0.5):
+
+    """
+    Adds vorticity (swirling) effects which are lost in previous steps.
+    
+    Args:
+    - frame (torch.Tensor): The simulation state tensor of shape (H, W, 5).
+    - vorticity_strength (float): Scaling factor for vorticity forces.
+
+    Returns:
+    - frame (torch.Tensor): Updated frame with vorticity confinement applied.
+    """
+
+    H, W = frame.shape[:2]
+    x_vel, y_vel = frame[:, :, 1], frame[:, :, 2]
+
+    up = torch.roll(x_vel, -1, dims=0)
+    down = torch.roll(x_vel, 1, dims=0)
+    left = torch.roll(y_vel, -1, dims=1)
+    right = torch.roll(y_vel, 1, dims=1)
+
+    # Compute curl of velocity field
+    curl = (left - right) - (up - down)
+
+    up = torch.roll(curl, -1, dims=0)
+    down = torch.roll(curl, 1, dims=0)
+    left = torch.roll(curl, -1, dims=1)
+    right = torch.roll(curl, 1, dims=1)
+
+    grad_x = left - right
+    grad_y = up - down
+
+    grad_magnitude = torch.sqrt(grad_x ** 2 + grad_y ** 2) + 1e-5
+
+    grad_x /= grad_magnitude
+    grad_y /= grad_magnitude
+
+    force_x = vorticity_strength * grad_y * curl
+    force_y = -vorticity_strength * grad_x * curl
+
+    frame[:, :, 1] += force_x
+    frame[:, :, 2] += force_y
+
+    return frame
+
+
+def solve_pressure(pressure, divergence, iterations):
+
+    for _ in range(int(int(iterations))):
+        # Jacobi iteration for pressure update
+        pressure[1:-1, 1:-1] = 0.25 * (
+            pressure[2:, 1:-1] + pressure[:-2, 1:-1] + 
+            pressure[1:-1, 2:] + pressure[1:-1, :-2] - 
+            divergence[1:-1, 1:-1]
+        )
+    
+    return pressure
+    
+    return pressure
+
+
+def divergence_removal(frame, iterations):
+
+    W, H, _ = frame.shape
+
+    for _ in range(int(int(iterations))):
+        velocity = frame[..., 1:3]
+
+        up = torch.roll(velocity, -1, dims=0)
+        down = torch.roll(velocity, 1, dims=0)
+
+        left = torch.roll(velocity, -1, dims=1)
+        right = torch.roll(velocity, 1, dims=1)
+
+        divergence = ((up[:, :, 1] - down[:, :, 1]) - (right[:, :, 0] - left[:, :, 0])) / 2
+
+        div_fft = torch.fft.fft2(divergence)
+
+        kx = torch.fft.fftfreq(W).reshape(W, 1) * W
+        ky = torch.fft.fftfreq(H).reshape(H, 1) * H
+
+        k2 = kx ** 2 + ky ** 2
+
+        k2[0, 0] = 1
+        phi_fft = div_fft / (-k2)
+        k2[0, 0] = 0
+
+        phi = torch.fft.ifft2(phi_fft).real
+
+        grad_phi_x = torch.gradient(phi, dim=1)[0]
+        grad_phi_y = torch.gradient(phi, dim=0)[0]
+
+        velocity[..., 0] -= grad_phi_x
+        velocity[..., 1] -= grad_phi_y
+
+        frame[..., 1:3] = velocity
+
+    return frame

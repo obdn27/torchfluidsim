@@ -13,6 +13,7 @@ SIM_PARAMS = {
     "mouse_y": 9,
     "dx": 10,
     "dy": 11,
+    "vorticity_strength": 12,
 }
 
 SIM_PARAMS_DEFAULTS = {
@@ -28,6 +29,7 @@ SIM_PARAMS_DEFAULTS = {
     "mouse_y": (0, 0, 0),
     "dx": (0, 0, 0),
     "dy": (0, 0, 0),
+    "vorticity_strength": (0.5, 0.05, 1.5),
 }
 
 SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1

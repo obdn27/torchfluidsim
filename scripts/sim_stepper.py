@@ -33,21 +33,26 @@ def step_simulation(current_frame, frame_number, params, grid_resolution):
         grid_resolution=grid_resolution,
     )
 
-    frame = solvers.diffuse_step(
-        frame=frame,
-        viscosity=params[SIM_PARAMS["viscosity"]],
-        diffusion_coeff=params[SIM_PARAMS["diffusion_rate"]],
-        dt=params[SIM_PARAMS["simulation_speed"]],
-        iterations=params[SIM_PARAMS["solver_iterations"]],
-    )
+    # frame = solvers.diffuse_step(
+    #     frame=frame,
+    #     viscosity=params[SIM_PARAMS["viscosity"]],
+    #     diffusion_coeff=params[SIM_PARAMS["diffusion_rate"]],
+    #     dt=params[SIM_PARAMS["simulation_speed"]],
+    #     iterations=params[SIM_PARAMS["solver_iterations"]],
+    # )
 
-    frame = solvers.pressure_solve_step(
+    # frame = solvers.pressure_solve_step(
+    #     frame=frame,
+    #     iterations=params[SIM_PARAMS["solver_iterations"]],
+    # )
+
+    # frame = solvers.correction_step(
+    #     frame=frame,
+    # )
+
+    frame = solvers.divergence_removal(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
-    )
-
-    frame = solvers.correction_step(
-        frame=frame,
     )
 
     return frame
@@ -75,10 +80,9 @@ def sim_stepper(grid_resolution):
     lasttime = time.time()
 
     while True:
-        print(current_frame.shape)
         next_frame = step_simulation(current_frame, frame_number, params_buffer, grid_resolution)
 
-        vis_buffer.copy_(next_frame[:, :, 0])  # Copy only the first channel (Density)
+        vis_buffer.copy_(next_frame[..., 0])  # Copy only the first channel (Density)
 
         frame_number += 10 * params_buffer[SIM_PARAMS["simulation_speed"]]
 
