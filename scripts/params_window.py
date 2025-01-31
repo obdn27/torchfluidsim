@@ -15,7 +15,7 @@ def control_panel():
         return lambda val: update_simulation_param(param_name, float(val), create_shm_params())
 
     root = tk.Tk()
-    root.geometry("300x900")
+    root.geometry("300x1020+50+20")
     root.title("Simulation Parameters")
 
     sliders = {}  # Dictionary to store slider references

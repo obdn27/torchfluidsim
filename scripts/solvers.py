@@ -2,6 +2,22 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 
+H, W = 0, 0
+Y, X = None, None
+
+
+def init_solver(frame):
+
+    global H, W, X, Y
+
+    H, W = frame.shape[:2]
+
+    Y, X = torch.meshgrid(
+        torch.arange(H),
+        torch.arange(W),
+        indexing='ij',
+    )
+
 
 def interaction_step(frame, interaction_radius, interaction_strength, reset_request, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt, decay_rate):
     """
@@ -29,13 +45,13 @@ def interaction_step(frame, interaction_radius, interaction_strength, reset_requ
 
     height, width = grid_resolution
 
-    y, x = torch.meshgrid(
+    Y, X = torch.meshgrid(
         torch.arange(height, dtype=torch.float32, device=frame.device),
         torch.arange(width, dtype=torch.float32, device=frame.device),
         indexing='ij'
     )
 
-    distance = torch.sqrt((x - norm_mouse_x) ** 2 + (y - norm_mouse_y) ** 2)
+    distance = torch.sqrt((X - norm_mouse_x) ** 2 + (Y - norm_mouse_y) ** 2)
     mask = distance < interaction_radius  # Boolean mask
 
     falloff = (1.0 - (distance / interaction_radius)).clamp(min=0)
@@ -53,48 +69,14 @@ def interaction_step(frame, interaction_radius, interaction_strength, reset_requ
     return updated_frame * decay_rate * reset_request
 
 
-def bilinear_interpolation(field, x, y):
-    """
-    Performs bilinear interpolation for a given field at fractional coordinates (x, y).
-    
-    Args:
-    - field (torch.Tensor): Input field of shape (H, W).
-    - x (torch.Tensor): X coordinates (can be fractional).
-    - y (torch.Tensor): Y coordinates (can be fractional).
+def add_streamlines(frame, streamline_speed, streamline_spacing, streamline_thickness):
 
-    Returns:
-    - torch.Tensor: Interpolated values at the given (x, y) positions.
-    """
+    mask = (torch.floor(Y / streamline_thickness) % int(streamline_spacing / streamline_thickness) == 0) & (X < 6)
 
-    H, W = field.shape
+    frame[:, :, 0] += mask
+    frame[:, :, 1] += mask * streamline_speed
 
-    # Get integer and fractional parts of coordinates
-    x0 = torch.floor(x).long()
-    x1 = x0 + 1
-    y0 = torch.floor(y).long()
-    y1 = y0 + 1
-
-    x0 = torch.clamp(x0, 0, W - 1)
-    x1 = torch.clamp(x1, 0, W - 1)
-    y0 = torch.clamp(y0, 0, H - 1)
-    y1 = torch.clamp(y1, 0, H - 1)
-
-    # Extract field values at four neighboring grid points
-    Q11 = field[y0, x0]  # Top-left
-    Q21 = field[y0, x1]  # Top-right
-    Q12 = field[y1, x0]  # Bottom-left
-    Q22 = field[y1, x1]  # Bottom-right
-
-    # Compute interpolation weights
-    wx = x - x0.float()
-    wy = y - y0.float()
-
-    # Bilinear interpolation formula
-    top = (1 - wx) * Q11 + wx * Q21
-    bottom = (1 - wx) * Q12 + wx * Q22
-    interpolated = (1 - wy) * top + wy * bottom
-
-    return interpolated
+    return frame
 
 
 def advection_step(frame, dt, grid_resolution):
@@ -146,138 +128,6 @@ def diffuse_step(frame, viscosity, diffusion_coeff, dt, iterations=20):
     return frame
 
 
-def pressure_solve_step(frame, iterations=40):
-    """
-    Iteratively solves for pressure using the Poisson equation.
-    """
-
-    for _ in range(int(int(iterations))):
-        divergence = frame[:, :, 3]
-        pressure = frame[:, :, 4]
-
-        up = torch.roll(pressure, -1, dims=0)
-        down = torch.roll(pressure, 1, dims=0)
-        left = torch.roll(pressure, -1, dims=1)
-        right = torch.roll(pressure, 1, dims=1)
-
-        frame[:, :, 4] = (up + down + left + right - divergence) / 4
-
-    return frame
-
-
-def correction_step(frame):
-
-    pressure = frame[:, :, 4]
-
-    up = torch.roll(pressure, -1, dims=0)
-    down = torch.roll(pressure, 1, dims=0)
-    left = torch.roll(pressure, -1, dims=1)
-    right = torch.roll(pressure, 1, dims=1)
-
-    frame[:, :, 1] -= 0.5 * (right - left)
-    frame[:, :, 2] -= 0.5 * (up - down)
-
-    return frame
-
-
-def vorticity_confinement_step(frame, vorticity_strength=0.5):
-
-    """
-    Adds vorticity (swirling) effects which are lost in previous steps.
-    
-    Args:
-    - frame (torch.Tensor): The simulation state tensor of shape (H, W, 5).
-    - vorticity_strength (float): Scaling factor for vorticity forces.
-
-    Returns:
-    - frame (torch.Tensor): Updated frame with vorticity confinement applied.
-    """
-
-    H, W = frame.shape[:2]
-    x_vel, y_vel = frame[:, :, 1], frame[:, :, 2]
-
-    up = torch.roll(x_vel, -1, dims=0)
-    down = torch.roll(x_vel, 1, dims=0)
-    left = torch.roll(y_vel, -1, dims=1)
-    right = torch.roll(y_vel, 1, dims=1)
-
-    # Compute curl of velocity field
-    curl = (left - right) - (up - down)
-
-    up = torch.roll(curl, -1, dims=0)
-    down = torch.roll(curl, 1, dims=0)
-    left = torch.roll(curl, -1, dims=1)
-    right = torch.roll(curl, 1, dims=1)
-
-    grad_x = left - right
-    grad_y = up - down
-
-    grad_magnitude = torch.sqrt(grad_x ** 2 + grad_y ** 2) + 1e-5
-
-    grad_x /= grad_magnitude
-    grad_y /= grad_magnitude
-
-    force_x = vorticity_strength * grad_y * curl
-    force_y = -vorticity_strength * grad_x * curl
-
-    frame[:, :, 1] += force_x
-    frame[:, :, 2] += force_y
-
-    return frame
-
-
-def solve_pressure(pressure, divergence, iterations):
-
-    for _ in range(int(int(iterations))):
-        # Jacobi iteration for pressure update
-        pressure[1:-1, 1:-1] = 0.25 * (
-            pressure[2:, 1:-1] + pressure[:-2, 1:-1] + 
-            pressure[1:-1, 2:] + pressure[1:-1, :-2] - 
-            divergence[1:-1, 1:-1]
-        )
-    
-    return pressure
-
-
-def divergence_removal(frame, iterations):
-
-    W, H, _ = frame.shape
-
-    for _ in range(int(int(iterations))):
-        velocity = frame[..., 1:3]
-
-        up = torch.roll(velocity, -1, dims=0)
-        down = torch.roll(velocity, 1, dims=0)
-
-        left = torch.roll(velocity, -1, dims=1)
-        right = torch.roll(velocity, 1, dims=1)
-
-        divergence = ((up[:, :, 1] - down[:, :, 1]) - (right[:, :, 0] - left[:, :, 0])) / 2
-
-        div_fft = torch.fft.fft2(divergence)
-
-        kx = torch.fft.fftfreq(W).reshape(W, 1) * W
-        ky = torch.fft.fftfreq(H).reshape(H, 1) * H
-
-        k2 = kx ** 2 + ky ** 2
-
-        k2[0, 0] = 1
-        phi_fft = div_fft / (-k2)
-        k2[0, 0] = 0
-
-        phi = torch.fft.ifft2(phi_fft).real
-
-        grad_phi_x = torch.gradient(phi, dim=1)[0]
-        grad_phi_y = torch.gradient(phi, dim=0)[0]
-
-        velocity[..., 0] -= grad_phi_x
-        velocity[..., 1] -= grad_phi_y
-
-        frame[..., 1:3] = velocity
-
-    return frame
-
-
 def projection_step(frame, iterations=40, over_relaxation=1.0, velocity_clamp=50.0):
     """
     Enforces incompressibility using a collocated grid (pressure & velocity at the same location).
@@ -316,17 +166,15 @@ def projection_step(frame, iterations=40, over_relaxation=1.0, velocity_clamp=50
             div
         )
     
-    # Apply over-relaxation (but keep it low for stability)
-    # pressure *= min(over_relaxation, 1.2)
+    # Apply over-relaxation
     pressure *= over_relaxation
 
     # Apply pressure gradient correction to velocity (collocated grid)
     u -= (torch.roll(pressure, shifts=-1, dims=1) - torch.roll(pressure, shifts=1, dims=1)) / 2
     v -= (torch.roll(pressure, shifts=-1, dims=0) - torch.roll(pressure, shifts=1, dims=0)) / 2
 
-    # CLAMP VELOCITIES TO PREVENT INSTABILITY 🚀
-    u = torch.clamp(u, -velocity_clamp, velocity_clamp)
-    v = torch.clamp(v, -velocity_clamp, velocity_clamp)
+    # u = torch.clamp(u, -velocity_clamp, velocity_clamp)
+    # v = torch.clamp(v, -velocity_clamp, velocity_clamp)
 
     # Store the updated values
     frame[:, :, 1] = u

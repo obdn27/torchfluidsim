@@ -28,11 +28,26 @@ def step_simulation(current_frame, params, grid_resolution):
         decay_rate=params[SIM_PARAMS["decay_rate"]],
     )
 
+    frame = solvers.add_streamlines(
+        frame=frame,
+        streamline_speed=params[SIM_PARAMS["streamline_speed"]],
+        streamline_spacing=params[SIM_PARAMS["streamline_spacing"]],
+        streamline_thickness=params[SIM_PARAMS["streamline_thickness"]],
+    )
+
     frame = solvers.advection_step(
         frame=frame,
         dt=params[SIM_PARAMS["simulation_speed"]],
         grid_resolution=grid_resolution,
     )
+
+    # frame = solvers.diffuse_step(
+    #     frame=frame,
+    #     viscosity=params[SIM_PARAMS["viscosity"]],
+    #     diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
+    #     dt=params[SIM_PARAMS["dt"]],
+    #     iterations=params[SIM_PARAMS["solver_iterations"]],
+    # )
 
     frame = solvers.projection_step(
         frame=frame,
@@ -63,6 +78,8 @@ def sim_stepper(grid_resolution):
     frame_number = 0
 
     lasttime = time.time()
+
+    solvers.init_solver(current_frame)
 
     while True:
         next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
