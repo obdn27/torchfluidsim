@@ -6,6 +6,7 @@ import subprocess
 import sys
 import os
 import pygame
+from PIL import Image
 
 from config import *
 
@@ -49,6 +50,33 @@ def update_simulation_param(param_name, value, shm_params):
     param_buffer[SIM_PARAMS[param_name]] = value
 
 
+def load_obstacle_texture(image_path, grid_resolution):
+    """
+    Loads an obstacle texture and converts it into a simulation-ready mask.
+
+    Args:
+    - image_path (str): Path to the image file.
+    - grid_resolution (tuple): Simulation grid resolution (H, W).
+
+    Returns:
+    - torch.Tensor: Binary obstacle mask (1 = solid, 0 = fluid).
+    """
+
+    H, W = grid_resolution
+
+    # Load image and convert to grayscale
+    image = Image.open(image_path).convert("L")  # Convert to grayscale
+    image = image.resize((W, H))  # Resize to match simulation resolution
+
+    # Convert image to NumPy and normalize (0-255 -> 0-1)
+    obstacle_mask = np.tensor(np.array(image), dtype=np.float32) / 255.0
+
+    # Threshold the mask (1 = solid obstacle, 0 = fluid)
+    obstacle_mask = (obstacle_mask > 0.5).float()
+
+    return obstacle_mask
+
+
 def visualisation_thread():
     """
     Pygame-based visualisation thread to display the shared memory field data
@@ -74,7 +102,12 @@ def visualisation_thread():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                reset = 0
+                keys = pygame.key.get_pressed()
+                if keys[pygame.K_SPACE]:
+                    reset = 0
+                if keys[pygame.K_TAB]:
+                    pass
+
 
         mouse_Y, mouse_X = pygame.mouse.get_pos()
         dy, dx = mouse_Y - last_mouse_Y, mouse_X - last_mouse_X
@@ -89,18 +122,16 @@ def visualisation_thread():
 
         data = buffer.copy()
 
-        def normalize_array(arr):
-            min_val = np.min(arr)
-            max_val = np.max(arr)
-            return (arr - min_val) / (max_val - min_val) if max_val > min_val else np.zeros_like(arr)
+        # density, obstacle = data[..., 0], data[..., 1]
 
-        data = normalize_array(buffer.copy())
+        density = colormap(data)[..., :-1]
+        # obstacle = colormap(obstacle)[..., :-1]
 
-        data = colormap(data)[:, :, :-1]
+        dens_surface = pygame.surfarray.make_surface((density * 255).astype(np.uint8))
+        # obs_surface = pygame.surfarray.make_surface((obstacle * 255).astype(np.uint8))
 
-        surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
-
-        screen.blit(pygame.transform.scale(surface, WINDOW_RES), (0, 0))
+        screen.blit(pygame.transform.scale(dens_surface, WINDOW_RES), (0, 0))
+        # screen.blit(pygame.transform.scale(obs_surface, WINDOW_RES), (0, 0))
         pygame.display.flip()
 
         last_mouse_X, last_mouse_Y = mouse_X, mouse_Y
@@ -143,10 +174,12 @@ if __name__ == "__main__":
 
     import params_window
 
-    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4))
+    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4 * 2))
     
     if not shm_params:
         shm_params = create_shm_params()
+
+    file_path_shm = create_shm(FILES_BUFFER_NAME, MAX_FILEPATH_SIZE)
 
     sim_stepper_process = launch_sim_stepper()
     # grapher_process = launch_grapher()
@@ -164,4 +197,5 @@ if __name__ == "__main__":
         # grapher_process.terminate()
         destroy_shared_memory(fields_shm)
         destroy_shared_memory(shm_params)
+        destroy_shared_memory(file_path_shm)
         print("Simulation stopped, subprocess terminated, and shared memory released.")

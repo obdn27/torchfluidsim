@@ -5,6 +5,7 @@ from config import *
 import solvers
 import numpy as np
 import time
+from PIL import Image
 
 print("SIM_STEPPER STARTED", __name__)
 
@@ -25,14 +26,6 @@ def step_simulation(current_frame, params, grid_resolution):
         window_res=WINDOW_RES,
         mouse_acceleration=(params[SIM_PARAMS["dx"]], params[SIM_PARAMS["dy"]]),
         dt=params[SIM_PARAMS["simulation_speed"]],
-        decay_rate=params[SIM_PARAMS["decay_rate"]],
-    )
-
-    frame = solvers.add_streamlines(
-        frame=frame,
-        streamline_speed=params[SIM_PARAMS["streamline_speed"]],
-        streamline_spacing=params[SIM_PARAMS["streamline_spacing"]],
-        streamline_thickness=params[SIM_PARAMS["streamline_thickness"]],
     )
 
     frame = solvers.advection_step(
@@ -41,21 +34,78 @@ def step_simulation(current_frame, params, grid_resolution):
         grid_resolution=grid_resolution,
     )
 
-    # frame = solvers.diffuse_step(
-    #     frame=frame,
-    #     viscosity=params[SIM_PARAMS["viscosity"]],
-    #     diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
-    #     dt=params[SIM_PARAMS["dt"]],
-    #     iterations=params[SIM_PARAMS["solver_iterations"]],
-    # )
-
-    frame = solvers.projection_step(
+    frame = solvers.diffuse_step(
+        frame=frame,
+        viscosity=params[SIM_PARAMS["viscosity"]],
+        diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
+        decay_rate=params[SIM_PARAMS["decay_rate"]],
+        dt=params[SIM_PARAMS["simulation_speed"]],
+    )
+   
+    frame = solvers.hierarchical_projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
     )
 
     return frame
+
+
+def load_obstacle_texture(image_path, grid_resolution):
+    """
+    Loads an obstacle texture and converts it into a simulation-ready mask.
+
+    Args:
+    - image_path (str): Path to the image file.
+    - grid_resolution (tuple): Simulation grid resolution (H, W).
+
+    Returns:
+    - torch.Tensor: Binary obstacle mask (1 = solid, 0 = fluid).
+    """
+
+    H, W = grid_resolution
+
+    # Load image and convert to grayscale
+    image = Image.open(image_path).convert("L")  # Convert to grayscale
+    image = image.resize((W, H))  # Resize to match simulation resolution
+
+    # Convert image to NumPy and normalize (0-255 -> 0-1)
+    obstacle_mask = torch.tensor(np.array(image), dtype=torch.float32) / 255.0
+
+    # Threshold the mask (1 = solid obstacle, 0 = fluid)
+    obstacle_mask = (obstacle_mask > 0.5).float()
+
+    return obstacle_mask
+
+
+def checkload_obstacle_texture(frame, old_path, new_path, grid_resolution):
+
+    if old_path != new_path and new_path != "":
+        frame[..., 5] = load_obstacle_texture(new_path, grid_resolution=grid_resolution)
+        print("filepath string:", new_path)
+
+    return frame
+
+
+def process_frame(frame):
+
+    def normalize_array(arr):
+        min_val = torch.min(arr)
+        max_val = torch.max(arr)
+        return (arr - min_val) / (max_val - min_val) if max_val > min_val else torch.zeros_like(arr)
+
+    
+    # normalized_density = normalize_array(frame[..., 0])
+
+    # output = torch.zeros(size=(*frame.shape[:2], 2))
+    
+    # output = (1 - frame[..., 5]) + normalized_density
+    # output = normalized_density
+
+    # output[..., 0] = normalize_array(frame[..., 0])
+    # output[..., 1] = normalize_array(frame[..., 5])
+
+    return normalize_array(frame[..., 0])
 
 
 def sim_stepper(grid_resolution):
@@ -72,29 +122,40 @@ def sim_stepper(grid_resolution):
     params_np = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=params_shm.buf)
     params_buffer = torch.from_numpy(params_np).to('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Creates empty 5-channel frame with channels corresponding to (density, xvel, yvel, divergence, pressure)
-    current_frame = torch.zeros((*grid_resolution, 5), dtype=torch.float32, device=vis_buffer.device)
+    filepath_shm = shared_memory.SharedMemory(FILES_BUFFER_NAME)
+    new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
+    new_path = ''.join(c for c in new_path if ord(c) != 0)
 
-    frame_number = 0
+    # Creates empty 6-channel frame with channels corresponding to (density, xvel, yvel, divergence, pressure, obstacle)
+    current_frame = torch.zeros((*grid_resolution, 6), dtype=torch.float32, device=vis_buffer.device)
+
+    old_path = ""
+
+    current_frame = checkload_obstacle_texture(current_frame, old_path, new_path, grid_resolution)
 
     lasttime = time.time()
 
     solvers.init_solver(current_frame)
 
     while True:
+
+        new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
+        new_path = ''.join(c for c in new_path if ord(c) != 0)
+
+        current_frame = checkload_obstacle_texture(current_frame, old_path, new_path, grid_resolution)
+
         next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
 
-        vis_buffer.copy_(next_frame[..., 0])  # Copy only the first channel (Density)
-
-        frame_number += 10 * params_buffer[SIM_PARAMS["simulation_speed"]]
+        vis_buffer.copy_(process_frame(next_frame))  # Copy only the first channel (Density)
 
         time.sleep(1 / FPS)
 
+        old_path = new_path
         current_frame = next_frame.clone()
 
         currenttime = time.time()
 
-        print(f"{(currenttime - lasttime) * 1000:.2f}ms")
+        # print(f"{(currenttime - lasttime) * 1000:.2f}ms")
         lasttime = currenttime
 
 if __name__ == "__main__":

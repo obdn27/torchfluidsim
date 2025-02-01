@@ -3,52 +3,53 @@
 SIM_PARAMS = {
     "interaction_strength": 0,
     "interaction_radius": 1,
-    "viscosity": 2,
-    "diffusion_rate": 3,
-    "decay_rate": 4,
-    "simulation_speed": 5,
-    "solver_iterations": 6,
-    "density_scaling": 7,
-    "mouse_x": 8,
-    "mouse_y": 9,
-    "dx": 10,
-    "dy": 11,
-    "vorticity_strength": 12,
-    "reset_request": 13,
-    "over_relaxation": 14,
-    "streamline_speed": 15,
-    "streamline_spacing": 16,
-    "streamline_thickness": 17,
+    "decay_rate": 2,
+    "simulation_speed": 3,
+    "solver_iterations": 4,
+    "density_scaling": 5,
+    "mouse_x": 6,
+    "mouse_y": 7,
+    "dx": 8,
+    "dy": 9,
+    "reset_request": 10,
+    "over_relaxation": 11,
+    "injection_strength": 12,
+    "stream_spacing": 13,
+    "stream_thickness": 14,
+    "viscosity": 15,
+    "diffusion_coeff": 16,
 }
 
 SIM_PARAMS_DEFAULTS = {
     "interaction_strength": (1, 0.5, 64),
     "interaction_radius": (24, 2, 128),
-    "viscosity": (0.1, 0, 2.5),
-    "diffusion_rate": (1, 0.01, 5),
     "decay_rate": (1 - 1e-2, 0.9, 1),
     "simulation_speed": (0.3, 0.005, 2),
-    "solver_iterations": (50, 1, 75),
+    "solver_iterations": (50, 1, 250),
     "density_scaling": (1, 0.1, 5),
     "mouse_x": (0, 0, 0),
     "mouse_y": (0, 0, 0),
     "dx": (0, 0, 0),
     "dy": (0, 0, 0),
-    "vorticity_strength": (0.5, 0.05, 1.5),
     "reset_request": (0.0, 0.0, 0.0),
     "over_relaxation": (1.2, 0.1, 2.3),
-    "streamline_speed": (0, 0, 20),
-    "streamline_spacing": (2, 2, 32),
-    "streamline_thickness": (4, 2, 8),
+    "injection_strength": (0, 0, 20),
+    "stream_spacing": (2, 2, 32),
+    "stream_thickness": (4, 2, 8),
+    "viscosity": (0.1, 0, 3),
+    "diffusion_coeff": (0.5, 0, 3),
 }
 
 SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
 
 FIELDS_BUFFER_NAME = "fields_buffer"
 PARAMS_BUFFER_NAME = "params_buffer"
+FILES_BUFFER_NAME = "files_buffer"
 
-BASE_RES = 64
-WINDOW_MULTIPLIER = 8
+MAX_FILEPATH_SIZE = 256     # Max file path size in bytes
+
+BASE_RES = 384
+WINDOW_MULTIPLIER = 2
 
 GRID_RESOLUTION = (BASE_RES, BASE_RES)
 WINDOW_RES = (int(BASE_RES * WINDOW_MULTIPLIER), int(BASE_RES * WINDOW_MULTIPLIER))
