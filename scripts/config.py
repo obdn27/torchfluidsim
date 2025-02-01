@@ -21,7 +21,7 @@ SIM_PARAMS = {
 }
 
 SIM_PARAMS_DEFAULTS = {
-    "interaction_strength": (12, 0.5, 64),
+    "interaction_strength": (48, 0.5, 64),
     "interaction_radius": (12, 2, 128),
     "decay_rate": (1 - 1e-2, 0.9, 1),
     "simulation_speed": (0.1, 0.005, 5),
@@ -32,9 +32,9 @@ SIM_PARAMS_DEFAULTS = {
     "dx": (0, 0, 0),
     "dy": (0, 0, 0),
     "reset_request": (0.0, 0.0, 0.0),
-    "over_relaxation": (1.2, 0.1, 2.3),
-    "injection_strength": (0, 0, 20),
-    "stream_spacing": (2, 2, 32),
+    "over_relaxation": (1.8, 0.1, 2.3),
+    "injection_strength": (5, 0, 50),
+    "stream_spacing": (4.0, 2.0, 32.0),
     "stream_thickness": (4, 2, 8),
     "viscosity": (0.1, 0, 3),
     "diffusion_coeff": (0.5, 0, 3),

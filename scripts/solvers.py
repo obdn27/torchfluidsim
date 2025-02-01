@@ -20,7 +20,7 @@ def init_solver(frame):
     )
 
 
-def interaction_step(frame, interaction_radius, interaction_strength, reset_request, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt):
+def interaction_step(frame, interaction_radius, interaction_strength, injection_strength, reset_request, mouse_x, mouse_y, grid_resolution, window_res, mouse_acceleration, dt):
     """
     Implements the AddMouseVelocityAndAdvection kernel in PyTorch.
 
@@ -52,10 +52,11 @@ def interaction_step(frame, interaction_radius, interaction_strength, reset_requ
 
     density, x_vel, y_vel, divergence, pressure, obstacle = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2], frame[:, :, 3], frame[:, :, 4], frame[:, :, 5]
 
-    x_vel = x_vel + (mouse_acceleration[0] * falloff) * interaction_strength
-    y_vel = y_vel + (mouse_acceleration[1] * falloff) * interaction_strength
+    if injection_strength <= 1:
+        x_vel = x_vel + (mouse_acceleration[0] * falloff) * interaction_strength
+        y_vel = y_vel + (mouse_acceleration[1] * falloff) * interaction_strength
 
-    density += (100.0 * falloff * dt) * interaction_strength
+        density += (100.0 * falloff * dt) * interaction_strength
 
     updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure, obstacle], dim=-1)
 
@@ -66,16 +67,17 @@ def interaction_step(frame, interaction_radius, interaction_strength, reset_requ
 
 def add_streamlines(frame, stream_speed, stream_spacing, stream_thickness):
 
-    # mask = ((Y // stream_thickness) % (stream_spacing // stream_thickness) == 0)
+    stream_thickness =  torch.clamp(stream_thickness.int(), min=1).item()
+    stream_spacing = stream_spacing.int().item()
+    stream_speed = stream_speed.float()
 
-    H, W, _ = frame.shape
+    streamline_mask = (((Y[:stream_thickness, :] % stream_spacing) <= stream_thickness)).float()
 
-    mask = (Y > H - 6)
+    # print(streamline_mask.shape, "wWHOWOO")
 
-    # Apply density and velocity injection
-    # frame[:, :, 1] = (mask & (X < 6)).float()  # Add horizontal velocity
-    frame[:, :, 2] = torch.clamp(frame[:, :, 2], min=stream_speed)
-    frame[:, :, 0] = mask.float() * stream_thickness  # Add density
+    # Inject velocity along the left boundary
+    frame[:stream_thickness, :, 0] = torch.max(frame[:, :, 0]) / 2 * streamline_mask
+    frame[:stream_thickness, :, 2] = stream_speed
 
     return frame
 
@@ -109,16 +111,16 @@ def diffuse_step(frame, viscosity, diffusion_coeff, decay_rate, dt, iterations=2
     Uses Gauss-Seidel iterations to diffuse velocity and density fields.
     """
 
-    # for _ in range(int(int(iterations))):
-    #     up = torch.roll(frame, -1, dims=0)
-    #     down = torch.roll(frame, 1, dims=0)
-    #     left = torch.roll(frame, -1, dims=1)
-    #     right = torch.roll(frame, 1, dims=1)
+    for _ in range(int(int(iterations))):
+        up = torch.roll(frame, -1, dims=0)
+        down = torch.roll(frame, 1, dims=0)
+        left = torch.roll(frame, -1, dims=1)
+        right = torch.roll(frame, 1, dims=1)
 
-    #     avg = (up + down + left + right) / 4
+        avg = (up + down + left + right) / 4
 
-    #     frame[:, :, 0] += (avg[:, :, 0] - frame[:, :, 0]) * (1 - torch.exp(-diffusion_coeff * dt))
-    #     frame[:, :, 1:3] += (avg[:, :, 1:3] - frame[:, :, 1:3]) * (1 - torch.exp(-viscosity * dt))
+        frame[:, :, 0] += (avg[:, :, 0] - frame[:, :, 0]) * (1 - torch.exp(-diffusion_coeff * dt))
+        frame[:, :, 1:3] += (avg[:, :, 1:3] - frame[:, :, 1:3]) * (1 - torch.exp(-viscosity * dt))
 
     frame[..., 0] *= decay_rate
 
@@ -150,9 +152,9 @@ def hierarchical_projection_step(frame, iterations, over_relaxation):
     u = frame[:, :, 1]  # x-velocity
     v = frame[:, :, 2]  # y-velocity
 
-    obstacle = frame[..., 5]
+    obstacle = frame[..., 5]        # 1 - air, 0 - obstacle
 
-    # Compute divergence: div(U) = d(u)/dx + d(v)/dy (collocated grid)
+    # Compute divergence: div(U) = d(u)/dx + d(v)/dy (collocated grid) and weighted by the presence of an obstacle
     fine_div = (
         (torch.roll(u, shifts=-1, dims=1) * torch.roll(obstacle, shifts=-1, dims=1) - torch.roll(u, shifts=1, dims=1) * torch.roll(obstacle, shifts=1, dims=1)) / 2 +
         (torch.roll(v, shifts=-1, dims=0) * torch.roll(obstacle, shifts=-1, dims=0) - torch.roll(v, shifts=1, dims=0) * torch.roll(obstacle, shifts=1, dims=0)) / 2

@@ -19,6 +19,7 @@ def step_simulation(current_frame, params, grid_resolution):
         frame=current_frame,
         interaction_radius=params[SIM_PARAMS["interaction_radius"]],
         interaction_strength=params[SIM_PARAMS["interaction_strength"]],
+        injection_strength=params[SIM_PARAMS["injection_strength"]],
         reset_request=params[SIM_PARAMS["reset_request"]],
         mouse_x=params[SIM_PARAMS["mouse_x"]],
         mouse_y=params[SIM_PARAMS["mouse_y"]],
@@ -34,20 +35,20 @@ def step_simulation(current_frame, params, grid_resolution):
         grid_resolution=grid_resolution,
     )
 
-    # frame = solvers.diffuse_step(
-    #     frame=frame,
-    #     viscosity=params[SIM_PARAMS["viscosity"]],
-    #     diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
-    #     decay_rate=params[SIM_PARAMS["decay_rate"]],
-    #     dt=params[SIM_PARAMS["simulation_speed"]],
-    # )
+    frame = solvers.diffuse_step(
+        frame=frame,
+        viscosity=params[SIM_PARAMS["viscosity"]],
+        diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
+        decay_rate=params[SIM_PARAMS["decay_rate"]],
+        dt=params[SIM_PARAMS["simulation_speed"]],
+    )
 
-    # frame = solvers.add_streamlines(
-    #     frame=frame,
-    #     stream_speed=params[SIM_PARAMS["injection_strength"]],
-    #     stream_spacing=params[SIM_PARAMS["stream_spacing"]],
-    #     stream_thickness=params[SIM_PARAMS["stream_thickness"]],
-    # )
+    frame = solvers.add_streamlines(
+        frame=frame,
+        stream_speed=params[SIM_PARAMS["injection_strength"]],
+        stream_spacing=params[SIM_PARAMS["stream_spacing"]],
+        stream_thickness=params[SIM_PARAMS["stream_thickness"]],
+    )
    
     frame = solvers.hierarchical_projection_step(
         frame=frame,
@@ -107,19 +108,7 @@ def process_frame(frame):
         max_val = torch.max(arr)
         return (arr - min_val) / (max_val - min_val) if max_val > min_val else torch.zeros_like(arr)
 
-    
-    # normalized_density = normalize_array(frame[..., 0])
-
-    # output = torch.zeros(size=(*frame.shape[:2], 2))
-    
-    # output = (1 - frame[..., 5]) + normalized_density
-    # output = normalized_density
-
-    # output[..., 0] = normalize_array(frame[..., 0])
-    # output[..., 1] = normalize_array(frame[..., 5])
-
-    # return normalize_array((frame[..., 0] * frame[..., 5]) - (1 - frame[..., 5]))
-    return normalize_array(frame[..., 0] * frame[..., 5])
+    return normalize_array(frame[..., 4] * frame[..., 5])
 
 
 def sim_stepper(grid_resolution):

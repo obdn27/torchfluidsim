@@ -92,7 +92,7 @@ def visualisation_thread():
 
     last_mouse_Y, last_mouse_X = 0, 0
 
-    colormap = plt.cm.magma
+    colormap = plt.cm.inferno
 
     reset = 1
 
