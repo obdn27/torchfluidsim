@@ -34,19 +34,32 @@ def step_simulation(current_frame, params, grid_resolution):
         grid_resolution=grid_resolution,
     )
 
-    frame = solvers.diffuse_step(
-        frame=frame,
-        viscosity=params[SIM_PARAMS["viscosity"]],
-        diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
-        decay_rate=params[SIM_PARAMS["decay_rate"]],
-        dt=params[SIM_PARAMS["simulation_speed"]],
-    )
+    # frame = solvers.diffuse_step(
+    #     frame=frame,
+    #     viscosity=params[SIM_PARAMS["viscosity"]],
+    #     diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
+    #     decay_rate=params[SIM_PARAMS["decay_rate"]],
+    #     dt=params[SIM_PARAMS["simulation_speed"]],
+    # )
+
+    # frame = solvers.add_streamlines(
+    #     frame=frame,
+    #     stream_speed=params[SIM_PARAMS["injection_strength"]],
+    #     stream_spacing=params[SIM_PARAMS["stream_spacing"]],
+    #     stream_thickness=params[SIM_PARAMS["stream_thickness"]],
+    # )
    
     frame = solvers.hierarchical_projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
     )
+
+    # frame = solvers.projection_step(
+    #     frame=frame,
+    #     iterations=params[SIM_PARAMS["solver_iterations"]],
+    #     over_relaxation=params[SIM_PARAMS["over_relaxation"]],
+    # )
 
     return frame
 
@@ -72,10 +85,10 @@ def load_obstacle_texture(image_path, grid_resolution):
     # Convert image to NumPy and normalize (0-255 -> 0-1)
     obstacle_mask = torch.tensor(np.array(image), dtype=torch.float32) / 255.0
 
-    # Threshold the mask (1 = solid obstacle, 0 = fluid)
-    obstacle_mask = (obstacle_mask > 0.5).float()
+    # Threshold the mask (0 = solid obstacle, 1 = fluid)
+    obstacle_mask = (obstacle_mask < 0.5).float()
 
-    return obstacle_mask
+    return 1 - obstacle_mask.permute(1, 0)
 
 
 def checkload_obstacle_texture(frame, old_path, new_path, grid_resolution):
@@ -105,7 +118,8 @@ def process_frame(frame):
     # output[..., 0] = normalize_array(frame[..., 0])
     # output[..., 1] = normalize_array(frame[..., 5])
 
-    return normalize_array(frame[..., 0])
+    # return normalize_array((frame[..., 0] * frame[..., 5]) - (1 - frame[..., 5]))
+    return normalize_array(frame[..., 0] * frame[..., 5])
 
 
 def sim_stepper(grid_resolution):

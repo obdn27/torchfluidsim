@@ -59,7 +59,7 @@ def interaction_step(frame, interaction_radius, interaction_strength, reset_requ
 
     updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure, obstacle], dim=-1)
 
-    # updated_frame[..., :5] *= reset_request
+    updated_frame[..., :5] *= reset_request
 
     return updated_frame
 
@@ -150,29 +150,30 @@ def hierarchical_projection_step(frame, iterations, over_relaxation):
     u = frame[:, :, 1]  # x-velocity
     v = frame[:, :, 2]  # y-velocity
 
+    obstacle = frame[..., 5]
+
     # Compute divergence: div(U) = d(u)/dx + d(v)/dy (collocated grid)
     fine_div = (
-        (torch.roll(u, shifts=-1, dims=1) - torch.roll(u, shifts=1, dims=1)) / 2 +
-        (torch.roll(v, shifts=-1, dims=0) - torch.roll(v, shifts=1, dims=0)) / 2
+        (torch.roll(u, shifts=-1, dims=1) * torch.roll(obstacle, shifts=-1, dims=1) - torch.roll(u, shifts=1, dims=1) * torch.roll(obstacle, shifts=1, dims=1)) / 2 +
+        (torch.roll(v, shifts=-1, dims=0) * torch.roll(obstacle, shifts=-1, dims=0) - torch.roll(v, shifts=1, dims=0) * torch.roll(obstacle, shifts=1, dims=0)) / 2
     )
 
-    fine_div *= (1 - frame[..., 5])
-
     coarse_div = F.interpolate(fine_div.unsqueeze(0).unsqueeze(0), size=(H // 4, W // 4), mode='bilinear', align_corners=False).squeeze()
-
     coarse_pressure = torch.zeros_like(coarse_div, device=frame.device)
+    
     coarse_pressure = iterate_pressure(coarse_pressure, coarse_div, iterations, 1)
-
     pressure = F.interpolate(coarse_pressure.unsqueeze(0).unsqueeze(0), size=(H, W), mode='bilinear', align_corners=False).squeeze()
     pressure = iterate_pressure(pressure, fine_div, iterations, over_relaxation)
 
-    # Apply pressure gradient correction to velocity (collocated grid)
-    u -= (torch.roll(pressure, shifts=-1, dims=1) - torch.roll(pressure, shifts=1, dims=1)) / 2
-    v -= (torch.roll(pressure, shifts=-1, dims=0) - torch.roll(pressure, shifts=1, dims=0)) / 2
+    grad_pressure_x = (torch.roll(pressure, shifts=-1, dims=1) - torch.roll(pressure, shifts=1, dims=1)) / 2
+    grad_pressure_y = (torch.roll(pressure, shifts=-1, dims=0) - torch.roll(pressure, shifts=1, dims=0)) / 2
 
-    u *= frame[..., 5]
-    v *= frame[..., 5]
-    frame[..., 0] *= (frame[..., 5])
+    # Apply pressure gradient correction to velocity (collocated grid)
+    u -= grad_pressure_x
+    v -= grad_pressure_y
+
+    u *= obstacle
+    v *= obstacle
 
     # Store the updated values
     frame[..., 1] = u
