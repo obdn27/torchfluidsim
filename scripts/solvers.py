@@ -9,7 +9,7 @@ Y, X = None, None
 
 def init_solver(frame):
 
-    global H, W, X, Y
+    global H, W, X, Y, image_tensor
 
     H, W = frame.shape[:2]
 
@@ -73,10 +73,11 @@ def add_streamlines(frame, stream_speed, stream_spacing, stream_thickness):
 
     streamline_mask = (((Y[:stream_thickness, :] % stream_spacing) <= stream_thickness)).float()
 
-    # print(streamline_mask.shape, "wWHOWOO")
+    value = torch.max(frame[:, :, 0])
+    value = torch.clamp(value, 5.0)
 
     # Inject velocity along the left boundary
-    frame[:stream_thickness, :, 0] = torch.max(frame[:, :, 0]) / 2 * streamline_mask
+    frame[:stream_thickness, :, 0] = value / 2 * streamline_mask
     frame[:stream_thickness, :, 2] = stream_speed
 
     return frame
@@ -144,29 +145,76 @@ def iterate_pressure(pressure, divergence, iterations, over_relaxation):
     return pressure
 
 
-def hierarchical_projection_step(frame, iterations, over_relaxation):
+def hierarchical_projection_step(frame, iterations, over_relaxation, scale_factor=4):
+    """
+    Multi-level pressure solve for better pressure propagation using hierarchical grids.
+
+    Args:
+    - frame (torch.Tensor): The simulation state tensor of shape (H, W, 6).
+    - iterations (int): Number of iterations for solving pressure.
+    - over_relaxation (float): Factor to speed up convergence.
+    - scale_factor (int): Factor by which each level downscales (e.g., 2 = half, 3 = third, etc.).
+
+    Returns:
+    - frame (torch.Tensor): Updated frame with corrected velocity field.
+    """
 
     H, W, _ = frame.shape
 
-    # Extract velocity components (stored at the same cell centers)
+    # Extract velocity components and obstacle mask
     u = frame[:, :, 1]  # x-velocity
     v = frame[:, :, 2]  # y-velocity
+    obstacle = frame[..., 5]  # 1 - air, 0 - obstacle
 
-    obstacle = frame[..., 5]        # 1 - air, 0 - obstacle
-
-    # Compute divergence: div(U) = d(u)/dx + d(v)/dy (collocated grid) and weighted by the presence of an obstacle
+    # Compute divergence while considering obstacles
     fine_div = (
-        (torch.roll(u, shifts=-1, dims=1) * torch.roll(obstacle, shifts=-1, dims=1) - torch.roll(u, shifts=1, dims=1) * torch.roll(obstacle, shifts=1, dims=1)) / 2 +
-        (torch.roll(v, shifts=-1, dims=0) * torch.roll(obstacle, shifts=-1, dims=0) - torch.roll(v, shifts=1, dims=0) * torch.roll(obstacle, shifts=1, dims=0)) / 2
+        (torch.roll(u, shifts=-1, dims=1) * torch.roll(obstacle, shifts=-1, dims=1) - 
+         torch.roll(u, shifts=1, dims=1) * torch.roll(obstacle, shifts=1, dims=1)) / 2 +
+        (torch.roll(v, shifts=-1, dims=0) * torch.roll(obstacle, shifts=-1, dims=0) - 
+         torch.roll(v, shifts=1, dims=0) * torch.roll(obstacle, shifts=1, dims=0)) / 2
     )
 
-    coarse_div = F.interpolate(fine_div.unsqueeze(0).unsqueeze(0), size=(H // 4, W // 4), mode='bilinear', align_corners=False).squeeze()
-    coarse_pressure = torch.zeros_like(coarse_div, device=frame.device)
-    
-    coarse_pressure = iterate_pressure(coarse_pressure, coarse_div, iterations, 1)
-    pressure = F.interpolate(coarse_pressure.unsqueeze(0).unsqueeze(0), size=(H, W), mode='bilinear', align_corners=False).squeeze()
-    pressure = iterate_pressure(pressure, fine_div, iterations, over_relaxation)
+    # Compute number of levels based on the scale factor
+    levels = 0
+    min_dim = min(H, W)
+    while min_dim >= 4 * scale_factor:  # Stop when the grid is smaller than 4x4
+        min_dim //= scale_factor
+        levels += 1
 
+    levels = max(1, levels)  # Ensure at least one level
+
+    # Store pressure at different levels
+    pressure_pyramids = []
+    div_pyramids = [fine_div]
+
+    # Build the hierarchy: Downsample divergence field at each level
+    for _ in range(levels):
+        downsampled_div = F.avg_pool2d(
+            div_pyramids[-1].unsqueeze(0).unsqueeze(0), 
+            kernel_size=scale_factor, stride=scale_factor
+        ).squeeze(0).squeeze(0)
+        div_pyramids.append(downsampled_div)
+
+    # Solve for pressure at the coarsest level first
+    coarse_pressure = torch.zeros_like(div_pyramids[-1], device=frame.device)
+    coarse_pressure = iterate_pressure(coarse_pressure, div_pyramids[-1], iterations, over_relaxation)
+    pressure_pyramids.append(coarse_pressure)
+
+    # Upsample and solve progressively at each finer level
+    for i in range(levels - 1, -1, -1):
+        fine_pressure = F.interpolate(
+            pressure_pyramids[-1].unsqueeze(0).unsqueeze(0), 
+            size=div_pyramids[i].shape, mode='bilinear', align_corners=False
+        ).squeeze(0).squeeze(0)
+
+        # Solve pressure again at this level
+        fine_pressure = iterate_pressure(fine_pressure, div_pyramids[i], iterations, over_relaxation)
+        pressure_pyramids.append(fine_pressure)
+
+    # Final pressure field from the finest level
+    pressure = pressure_pyramids[-1]
+
+    # Compute pressure gradients
     grad_pressure_x = (torch.roll(pressure, shifts=-1, dims=1) - torch.roll(pressure, shifts=1, dims=1)) / 2
     grad_pressure_y = (torch.roll(pressure, shifts=-1, dims=0) - torch.roll(pressure, shifts=1, dims=0)) / 2
 

@@ -24,7 +24,7 @@ SIM_PARAMS_DEFAULTS = {
     "interaction_strength": (48, 0.5, 64),
     "interaction_radius": (12, 2, 128),
     "decay_rate": (1 - 1e-2, 0.9, 1),
-    "simulation_speed": (0.1, 0.005, 5),
+    "simulation_speed": (0.1, 0.005, 0.5),
     "solver_iterations": (50, 1, 250),
     "density_scaling": (1, 0.1, 5),
     "mouse_x": (0, 0, 0),
@@ -48,8 +48,8 @@ FILES_BUFFER_NAME = "files_buffer"
 
 MAX_FILEPATH_SIZE = 256     # Max file path size in bytes
 
-BASE_RES = 256
-WINDOW_MULTIPLIER = 3
+BASE_RES = 192
+WINDOW_MULTIPLIER = 4
 
 GRID_RESOLUTION = (BASE_RES, BASE_RES)
 WINDOW_RES = (int(BASE_RES * WINDOW_MULTIPLIER), int(BASE_RES * WINDOW_MULTIPLIER))

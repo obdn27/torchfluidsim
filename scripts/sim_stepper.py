@@ -6,8 +6,11 @@ import solvers
 import numpy as np
 import time
 from PIL import Image
+import matplotlib.pyplot as plt
 
 print("SIM_STEPPER STARTED", __name__)
+colormap = plt.cm.inferno
+image_tensor = None
 
 def step_simulation(current_frame, params, grid_resolution):
     """
@@ -89,13 +92,15 @@ def load_obstacle_texture(image_path, grid_resolution):
     # Threshold the mask (0 = solid obstacle, 1 = fluid)
     obstacle_mask = (obstacle_mask < 0.5).float()
 
-    return 1 - obstacle_mask.permute(1, 0)
+    return 1 - obstacle_mask.permute(1, 0), torch.tensor(np.array(image)).permute(1, 0).unsqueeze(-1).expand(-1, -1, 3)
 
 
 def checkload_obstacle_texture(frame, old_path, new_path, grid_resolution):
 
+    global image_tensor
+
     if old_path != new_path and new_path != "":
-        frame[..., 5] = load_obstacle_texture(new_path, grid_resolution=grid_resolution)
+        frame[..., 5], image_tensor = load_obstacle_texture(new_path, grid_resolution=grid_resolution)
         print("filepath string:", new_path)
 
     return frame
@@ -108,7 +113,13 @@ def process_frame(frame):
         max_val = torch.max(arr)
         return (arr - min_val) / (max_val - min_val) if max_val > min_val else torch.zeros_like(arr)
 
-    return normalize_array(frame[..., 4] * frame[..., 5])
+    result = normalize_array(frame[..., 0] * frame[..., 5])
+
+    image_overlay = (image_tensor * (1 - frame[..., 5]).unsqueeze(-1).expand(-1, -1, 3))
+
+    result = colormap(result)
+
+    return torch.tensor(result)[..., :3] + image_overlay
 
 
 def sim_stepper(grid_resolution):
@@ -117,8 +128,10 @@ def sim_stepper(grid_resolution):
     Writes only the density field (single-channel) to shared memory for visualization.
     """
 
+    global image_tensor
+
     vis_shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    vis_buffer_np = np.ndarray(grid_resolution, dtype=np.float32, buffer=vis_shm.buf)
+    vis_buffer_np = np.ndarray((*grid_resolution, 3), dtype=np.float32, buffer=vis_shm.buf)
     vis_buffer = torch.from_numpy(vis_buffer_np).to('cuda' if torch.cuda.is_available() else 'cpu')
 
     params_shm = shared_memory.SharedMemory(name=PARAMS_BUFFER_NAME)
@@ -128,6 +141,8 @@ def sim_stepper(grid_resolution):
     filepath_shm = shared_memory.SharedMemory(FILES_BUFFER_NAME)
     new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
     new_path = ''.join(c for c in new_path if ord(c) != 0)
+
+    image_tensor = torch.zeros((*grid_resolution, 3))
 
     # Creates empty 6-channel frame with channels corresponding to (density, xvel, yvel, divergence, pressure, obstacle)
     current_frame = torch.zeros((*grid_resolution, 6), dtype=torch.float32, device=vis_buffer.device)

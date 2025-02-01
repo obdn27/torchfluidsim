@@ -84,15 +84,13 @@ def visualisation_thread():
     global shm_params
 
     shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    buffer = np.ndarray(GRID_RESOLUTION, dtype=np.float32, buffer=shm.buf)
+    buffer = np.ndarray((*GRID_RESOLUTION, 3), dtype=np.float32, buffer=shm.buf)
     
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_RES)
     pygame.display.set_caption("Simulation visualisation")
 
     last_mouse_Y, last_mouse_X = 0, 0
-
-    colormap = plt.cm.inferno
 
     reset = 1
 
@@ -124,10 +122,10 @@ def visualisation_thread():
 
         # density, obstacle = data[..., 0], data[..., 1]
 
-        density = colormap(data)[..., :-1]
+        # density = colormap(data)[..., :-1]
         # obstacle = colormap(obstacle)[..., :-1]
 
-        dens_surface = pygame.surfarray.make_surface((density * 255).astype(np.uint8))
+        dens_surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
         # obs_surface = pygame.surfarray.make_surface((obstacle * 255).astype(np.uint8))
 
         screen.blit(pygame.transform.scale(dens_surface, WINDOW_RES), (0, 0))
@@ -174,7 +172,7 @@ if __name__ == "__main__":
 
     import params_window
 
-    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4 * 2))
+    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4 * 3))
     
     if not shm_params:
         shm_params = create_shm_params()
