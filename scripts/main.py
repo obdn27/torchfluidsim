@@ -120,16 +120,9 @@ def visualisation_thread():
 
         data = buffer.copy()
 
-        # density, obstacle = data[..., 0], data[..., 1]
-
-        # density = colormap(data)[..., :-1]
-        # obstacle = colormap(obstacle)[..., :-1]
-
         dens_surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
-        # obs_surface = pygame.surfarray.make_surface((obstacle * 255).astype(np.uint8))
 
         screen.blit(pygame.transform.scale(dens_surface, WINDOW_RES), (0, 0))
-        # screen.blit(pygame.transform.scale(obs_surface, WINDOW_RES), (0, 0))
         pygame.display.flip()
 
         last_mouse_X, last_mouse_Y = mouse_X, mouse_Y

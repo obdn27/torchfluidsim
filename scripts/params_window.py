@@ -22,7 +22,7 @@ def control_panel():
 
     sliders = {}  # Dictionary to store slider references
 
-    for param_name, (default_value, min_, max_) in SIM_PARAMS_DEFAULTS.items():
+    for param_name, (default_value, min_, max_, step) in SIM_PARAMS_DEFAULTS.items():
 
         if param_name in ["mouse_x", "mouse_y", "density_scaling", "dx", "dy", "reset_request", "obstacle_path"]:
             continue
@@ -34,7 +34,7 @@ def control_panel():
             to=max_,
             orient="horizontal",
             command=update_param(param_name),
-            resolution=0.05
+            resolution=step
         )
         slider.set(default_value)
         slider.pack(pady=5)

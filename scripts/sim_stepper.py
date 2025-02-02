@@ -7,6 +7,7 @@ import numpy as np
 import time
 from PIL import Image
 import matplotlib.pyplot as plt
+import scipy.ndimage
 
 print("SIM_STEPPER STARTED", __name__)
 colormap = plt.cm.inferno
@@ -57,13 +58,8 @@ def step_simulation(current_frame, params, grid_resolution):
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
+        scale_factor=2,
     )
-
-    # frame = solvers.projection_step(
-    #     frame=frame,
-    #     iterations=params[SIM_PARAMS["solver_iterations"]],
-    #     over_relaxation=params[SIM_PARAMS["over_relaxation"]],
-    # )
 
     return frame
 
@@ -100,26 +96,63 @@ def checkload_obstacle_texture(frame, old_path, new_path, grid_resolution):
     global image_tensor
 
     if old_path != new_path and new_path != "":
+        frame[...] = 0
         frame[..., 5], image_tensor = load_obstacle_texture(new_path, grid_resolution=grid_resolution)
         print("filepath string:", new_path)
 
     return frame
 
 
-def process_frame(frame):
+def process_frame(frame, field):
 
     def normalize_array(arr):
         min_val = torch.min(arr)
         max_val = torch.max(arr)
         return (arr - min_val) / (max_val - min_val) if max_val > min_val else torch.zeros_like(arr)
 
-    result = normalize_array(frame[..., 0] * frame[..., 5])
+    field = int(field.item())
+    result = normalize_array(frame[..., field] * frame[..., 5])
 
     image_overlay = (image_tensor * (1 - frame[..., 5]).unsqueeze(-1).expand(-1, -1, 3))
 
     result = colormap(result)
+    result = apply_bloom(result, 0.6)
 
     return torch.tensor(result)[..., :3] + image_overlay
+
+
+def apply_bloom(image, threshold=0.6, blur_radius=10, intensity=0.5):
+    """
+    Applies a bloom effect to an HxWx4 RGBA image array.
+    
+    Parameters:
+    - image (np.ndarray): HxWx4 image array with values in [0, 1].
+    - threshold (float): Intensity threshold for bloom (0-1).
+    - blur_radius (int): Radius of Gaussian blur.
+    - intensity (float): How strong the bloom effect is when blended back.
+    
+    Returns:
+    - np.ndarray: Image with bloom effect.
+    """
+    # Extract RGB channels (ignore alpha for bloom calculation)
+    rgb = image[..., :3]
+
+    # Convert to grayscale intensity
+    grayscale = np.mean(rgb, axis=-1, keepdims=True)
+    
+    # Extract bright areas
+    bright_areas = np.where(grayscale > threshold, rgb, np.zeros_like(rgb))
+    
+    # Apply Gaussian blur to each RGB channel
+    blurred = np.stack([scipy.ndimage.gaussian_filter(bright_areas[..., i], blur_radius) for i in range(3)], axis=-1)
+    
+    # Blend with original image
+    result_rgb = np.clip(rgb + intensity * blurred, 0, 1)
+
+    # Preserve alpha channel
+    result = np.concatenate([result_rgb, image[..., 3:4]], axis=-1)  # Append alpha back
+
+    return result
 
 
 def sim_stepper(grid_resolution):
@@ -164,7 +197,7 @@ def sim_stepper(grid_resolution):
 
         next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
 
-        vis_buffer.copy_(process_frame(next_frame))  # Copy only the first channel (Density)
+        vis_buffer.copy_(process_frame(next_frame, params_buffer[SIM_PARAMS["current_field"]]))  # Copy processed frame depending on which field the user has selected
 
         time.sleep(1 / FPS)
 
