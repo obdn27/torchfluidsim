@@ -19,6 +19,7 @@ SIM_PARAMS = {
     "viscosity": 15,
     "diffusion_coeff": 16,
     "current_field": 17,
+    "grid_width": 18,
 }
 
 SIM_PARAMS_DEFAULTS = {
@@ -39,7 +40,8 @@ SIM_PARAMS_DEFAULTS = {
     "stream_thickness": (4, 2, 8, 2),
     "viscosity": (0.01, 0, 3, 0.05),
     "diffusion_coeff": (0.01, 0, 3, 0.05),
-    "current_field": (4, 0, 5, 1)
+    "current_field": (4, 0, 5, 1),
+    "grid_width": (128, 64, 2048, 64),
 }
 
 SIM_PARAMS_SIZE = len(SIM_PARAMS) + 1
@@ -55,6 +57,7 @@ WINDOW_MULTIPLIER = 6
 
 GRID_RESOLUTION = (BASE_RES, BASE_RES)
 WINDOW_RES = (int(BASE_RES * WINDOW_MULTIPLIER), int(BASE_RES * WINDOW_MULTIPLIER))
+MAX_RES = (2048, 2048)
 
 SIM_STEPPER_LOC = "\\scripts\\sim_stepper.py"
 GRAPHER_LOC = "\\scripts\\timeseries_grapher.py"

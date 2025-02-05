@@ -5,41 +5,58 @@ from multiprocessing import shared_memory
 import torch
 from config import *
 from collections import deque
+import frame_analysis
 
 print("GRAPHER STARTED", __name__)
 
 def graphing_thread():
     """
-    Reads density values from shared memory and updates a time-series graph in real-time.
+    Reads simulation data from shared memory and updates multiple time-series graphs in real-time.
     """
     shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    buffer = np.ndarray(GRID_RESOLUTION, dtype=np.float32, buffer=shm.buf)
+    buffer = np.ndarray((*GRID_RESOLUTION, 6), dtype=np.float32, buffer=shm.buf)  # Now supports all frame data
 
     plt.ion()
-    fig, ax = plt.subplots()
-    x_data, y_data = deque(maxlen=MAX_DATA_LEN), deque(maxlen=MAX_DATA_LEN)
-    line, = ax.plot(x_data, y_data, label="Average Density")
+    fig, axs = plt.subplots(3, 2, figsize=(10, 10))  # 3x2 grid of plots
 
-    ax.set_title("Time-Series Graph of Density")
-    ax.set_xlabel("Time (frames)")
-    ax.set_ylabel("Average Density")
-    ax.legend()
-    
+    metric_names = [
+        "total mass", "total momentum", "kinetic energy",
+        "vorticity sum", "average pressure", "drag"
+    ]
+
+    data_buffers = {name: deque(maxlen=MAX_DATA_LEN) for name in metric_names}
+    x_data = deque(maxlen=MAX_DATA_LEN)
+
+    lines = {}
+    for ax, name in zip(axs.flat, metric_names):
+        lines[name], = ax.plot([], [], label=name)
+        ax.set_title(name.replace("_", " ").title())
+        ax.set_xlabel("Time (frames)")
+        ax.set_ylabel(name)
+        ax.legend()
+
     frame_count = 0
 
     try:
         while True:
-            avg_density = np.mean(buffer)
+            # Extract frame metrics
+            frame_tensor = torch.from_numpy(buffer.copy())  # Convert to tensor for analysis
+            metrics = frame_analysis.analyse_frame(frame_tensor)
 
             x_data.append(frame_count)
-            y_data.append(avg_density)
 
-            line.set_xdata(list(x_data))
-            line.set_ydata(list(y_data))
-            ax.relim()
-            ax.autoscale_view()
+            # Update each metric plot
+            for name in metric_names:
+                data_buffers[name].append(metrics[name])
+                lines[name].set_xdata(list(x_data))
+                lines[name].set_ydata(list(data_buffers[name]))
+
+            for ax in axs.flat:
+                ax.relim()
+                ax.autoscale_view()
+
             plt.draw()
-            plt.pause(1 / FPS)
+            plt.pause(1 / FPS)  # Real-time update
 
             frame_count += 1
 

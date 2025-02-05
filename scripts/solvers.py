@@ -117,6 +117,34 @@ def advection_step(frame, dt, grid_resolution):
     return advected_frame
 
 
+def mac_cormack_advection_step(frame, dt, grid_resolution):
+    
+    dt *= 1e-2
+
+    u, v = frame[:, :, 1].unsqueeze(-1), frame[:, :, 2].unsqueeze(-1)
+
+    u, v = u.expand(-1, -1, 5), v.expand(-1, -1, 5)
+
+    # Forward/predictor step - predicting where fluid parcel will be in a bit
+    q = frame[..., 0:5]
+    q_star = q.clone()
+    q_star -= u * (dt) * (torch.roll(q, shifts=-1, dims=0) - q)
+    q_star -= v * (dt) * (torch.roll(q, shifts=-1, dims=1) - q)
+
+    # Backward/correct step 
+    # q_new = 0.5 * (q + q_star)
+    # q_new -= 0.5 * u * (dt) * (q_star - torch.roll(q_star, shifts=1, dims=0) - q)
+    # q_new -= 0.5 * v * (dt) * (q_star - torch.roll(q_star, shifts=1, dims=1) - q)
+
+    q_new = q.clone()
+    q_new -= 0.5 * dt * (u * (torch.roll(q_star, shifts=-1, dims=1) - q_star))
+    q_new -= 0.5 * dt * (v * (torch.roll(q_star, shifts=-1, dims=1) - q_star))
+
+    frame[..., 0:5] = q_new
+
+    return frame
+
+
 def diffuse_step(frame, viscosity, diffusion_coeff, decay_rate, dt, iterations=20):
     """
     Uses Gauss-Seidel iterations to diffuse velocity and density fields.
@@ -134,6 +162,7 @@ def diffuse_step(frame, viscosity, diffusion_coeff, decay_rate, dt, iterations=2
     #     frame[:, :, 1:3] += (avg[:, :, 1:3] - frame[:, :, 1:3]) * (1 - torch.exp(-viscosity * dt))
 
     frame[..., 0] *= decay_rate
+    frame[..., 4] *= decay_rate
 
     return frame
 

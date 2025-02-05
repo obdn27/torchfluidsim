@@ -77,6 +77,31 @@ def load_obstacle_texture(image_path, grid_resolution):
     return obstacle_mask
 
 
+def restart_simulation(new_width, new_height, _sim_stepper_process=None):
+    """
+    Updates the simulation's active resolution WITHOUT clearing the buffer.
+    """
+
+    global sim_stepper_process, GRID_RESOLUTION
+
+    print(f"Updating Simulation Resolution: {new_width}x{new_height}")
+
+    # Update global resolution
+    GRID_RESOLUTION = (int(new_height), int(new_width))
+
+    # Store the new resolution in the shared `PARAMS_BUFFER`
+    update_simulation_param("grid_width", new_width, shm_params)
+
+    # Restart only the simulation process (NOT the buffer)
+    if _sim_stepper_process:
+        _sim_stepper_process.terminate()
+        _sim_stepper_process = launch_sim_stepper()
+
+    print("Simulation Restarted with New Resolution!")
+
+    return _sim_stepper_process, GRID_RESOLUTION
+
+
 def visualisation_thread():
     """
     Pygame-based visualisation thread to display the shared memory field data
@@ -84,7 +109,10 @@ def visualisation_thread():
     global shm_params
 
     shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    buffer = np.ndarray((*GRID_RESOLUTION, 3), dtype=np.float32, buffer=shm.buf)
+    buffer = np.ndarray((*MAX_RES, 3), dtype=np.float32, buffer=shm.buf)
+
+    params_shm = shared_memory.SharedMemory(name=PARAMS_BUFFER_NAME)
+    params_np = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=params_shm.buf)
     
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_RES)
@@ -118,9 +146,14 @@ def visualisation_thread():
 
         reset = 1
 
-        data = buffer.copy()
+        current_width = params_np[SIM_PARAMS["grid_width"]]
+        current_width = int(int(current_width))
 
-        dens_surface = pygame.surfarray.make_surface((data * 255).astype(np.uint8))
+        data = buffer.copy()[:current_width, :current_width, :]
+
+        vis_data = data[..., :3]        
+
+        dens_surface = pygame.surfarray.make_surface((vis_data * 255).astype(np.uint8))
 
         screen.blit(pygame.transform.scale(dens_surface, WINDOW_RES), (0, 0))
         pygame.display.flip()
@@ -165,7 +198,7 @@ if __name__ == "__main__":
 
     import params_window
 
-    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(GRID_RESOLUTION) * 4 * 3))
+    fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(MAX_RES) * 4 * 7))
     
     if not shm_params:
         shm_params = create_shm_params()
@@ -173,7 +206,7 @@ if __name__ == "__main__":
     file_path_shm = create_shm(FILES_BUFFER_NAME, MAX_FILEPATH_SIZE)
 
     sim_stepper_process = launch_sim_stepper()
-    # grapher_process = launch_grapher()
+    grapher_process = launch_grapher()
 
     vis_thread = threading.Thread(target=visualisation_thread)
     vis_thread.start()
@@ -185,7 +218,7 @@ if __name__ == "__main__":
     finally:
         vis_thread.join()
         sim_stepper_process.terminate()
-        # grapher_process.terminate()
+        grapher_process.terminate()
         destroy_shared_memory(fields_shm)
         destroy_shared_memory(shm_params)
         destroy_shared_memory(file_path_shm)

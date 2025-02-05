@@ -33,6 +33,13 @@ def step_simulation(current_frame, params, grid_resolution):
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
 
+    frame = solvers.add_streamlines(
+        frame=frame,
+        stream_speed=params[SIM_PARAMS["injection_strength"]],
+        stream_spacing=params[SIM_PARAMS["stream_spacing"]],
+        stream_thickness=params[SIM_PARAMS["stream_thickness"]],
+    )
+
     frame = solvers.advection_step(
         frame=frame,
         dt=params[SIM_PARAMS["simulation_speed"]],
@@ -47,13 +54,6 @@ def step_simulation(current_frame, params, grid_resolution):
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
 
-    frame = solvers.add_streamlines(
-        frame=frame,
-        stream_speed=params[SIM_PARAMS["injection_strength"]],
-        stream_spacing=params[SIM_PARAMS["stream_spacing"]],
-        stream_thickness=params[SIM_PARAMS["stream_thickness"]],
-    )
-   
     frame = solvers.hierarchical_projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
@@ -155,6 +155,19 @@ def apply_bloom(image, threshold=0.6, blur_radius=10, intensity=0.5):
     return result
 
 
+def pad_frame(frame, max_res_frame, width):
+
+    global image_tensor
+    width = int(int(width))
+
+    if frame.shape != torch.Size([width, width, 3]):
+        # User must have changed grid resolution
+        sim_stepper((width, width))
+    
+    max_res_frame[:width, :width, :] = frame
+    return max_res_frame
+
+
 def sim_stepper(grid_resolution):
     """
     Runs the simulation stepper, using PyTorch tensors for computations.
@@ -163,8 +176,10 @@ def sim_stepper(grid_resolution):
 
     global image_tensor
 
+    # print("Starting sim_stepper")
+
     vis_shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    vis_buffer_np = np.ndarray((*grid_resolution, 3), dtype=np.float32, buffer=vis_shm.buf)
+    vis_buffer_np = np.ndarray((*MAX_RES, 3), dtype=np.float32, buffer=vis_shm.buf)
     vis_buffer = torch.from_numpy(vis_buffer_np).to('cuda' if torch.cuda.is_available() else 'cpu')
 
     params_shm = shared_memory.SharedMemory(name=PARAMS_BUFFER_NAME)
@@ -186,6 +201,8 @@ def sim_stepper(grid_resolution):
 
     lasttime = time.time()
 
+    max_res_frame = torch.zeros((*MAX_RES, 3))
+
     solvers.init_solver(current_frame)
 
     while True:
@@ -197,7 +214,10 @@ def sim_stepper(grid_resolution):
 
         next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
 
-        vis_buffer.copy_(process_frame(next_frame, params_buffer[SIM_PARAMS["current_field"]]))  # Copy processed frame depending on which field the user has selected
+        processed_frame = process_frame(next_frame, params_buffer[SIM_PARAMS["current_field"]])
+        padded_frame = pad_frame(processed_frame, max_res_frame, params_buffer[SIM_PARAMS["grid_width"]])
+
+        vis_buffer.copy_(padded_frame)  # Copy processed frame depending on which field the user has selected
 
         time.sleep(1 / FPS)
 
