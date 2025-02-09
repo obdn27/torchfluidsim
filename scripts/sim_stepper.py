@@ -168,7 +168,7 @@ def pad_frame(frame, max_res_frame, width):
     return max_res_frame
 
 
-def sim_stepper(grid_resolution):
+def sim_stepper():
     """
     Runs the simulation stepper, using PyTorch tensors for computations.
     Writes only the density field (single-channel) to shared memory for visualization.
@@ -189,6 +189,8 @@ def sim_stepper(grid_resolution):
     filepath_shm = shared_memory.SharedMemory(FILES_BUFFER_NAME)
     new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
     new_path = ''.join(c for c in new_path if ord(c) != 0)
+
+    grid_resolution = GRID_RESOLUTION
 
     image_tensor = torch.zeros((*grid_resolution, 3))
 
@@ -229,5 +231,6 @@ def sim_stepper(grid_resolution):
         # print(f"{(currenttime - lasttime) * 1000:.2f}ms")
         lasttime = currenttime
 
+
 if __name__ == "__main__":
-    sim_stepper(GRID_RESOLUTION)
+    sim_stepper()

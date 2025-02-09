@@ -10,6 +10,16 @@ from PIL import Image
 
 from config import *
 
+
+def update_simulation_param(param_name, value, shm_params):
+    """
+    Updates given simulation parameter in shared memory
+    """
+
+    param_buffer = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=shm_params.buf)
+    param_buffer[SIM_PARAMS[param_name]] = value
+
+
 def destroy_shared_memory(shm):
     shm.close()
     shm.unlink()
@@ -37,65 +47,24 @@ def create_shm(BUFFER_NAME, nbytes):
     return shm
 
 
-def update_simulation_param(param_name, value, shm_params):
+def create_shm_params():
+    global shm_params
+
+    try:
+        shm_params = shared_memory.SharedMemory(PARAMS_BUFFER_NAME)
+    except FileNotFoundError:
+        shm_params = create_shm(PARAMS_BUFFER_NAME, SIM_PARAMS_SIZE * 4)
+
+    return shm_params
+
+
+def launch_sim_stepper():
     """
-    Updates given simulation parameter in shared memory
-    """
-
-    param_buffer = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=shm_params.buf)
-    param_buffer[SIM_PARAMS[param_name]] = value
-
-
-def load_obstacle_texture(image_path, grid_resolution):
-    """
-    Loads an obstacle texture and converts it into a simulation-ready mask.
-
-    Args:
-    - image_path (str): Path to the image file.
-    - grid_resolution (tuple): Simulation grid resolution (H, W).
-
-    Returns:
-    - torch.Tensor: Binary obstacle mask (1 = solid, 0 = fluid).
+    Launches the sim_stepper.py script as a separate process
     """
 
-    H, W = grid_resolution
-
-    # Load image and convert to grayscale
-    image = Image.open(image_path).convert("L")  # Convert to grayscale
-    image = image.resize((W, H))  # Resize to match simulation resolution
-
-    # Convert image to NumPy and normalize (0-255 -> 0-1)
-    obstacle_mask = np.tensor(np.array(image), dtype=np.float32) / 255.0
-
-    # Threshold the mask (1 = solid obstacle, 0 = fluid)
-    obstacle_mask = (obstacle_mask > 0.5).float()
-
-    return obstacle_mask
-
-
-def restart_simulation(new_width, new_height, _sim_stepper_process=None):
-    """
-    Updates the simulation's active resolution WITHOUT clearing the buffer.
-    """
-
-    global sim_stepper_process, GRID_RESOLUTION
-
-    print(f"Updating Simulation Resolution: {new_width}x{new_height}")
-
-    # Update global resolution
-    GRID_RESOLUTION = (int(new_height), int(new_width))
-
-    # Store the new resolution in the shared `PARAMS_BUFFER`
-    update_simulation_param("grid_width", new_width, shm_params)
-
-    # Restart only the simulation process (NOT the buffer)
-    if _sim_stepper_process:
-        _sim_stepper_process.terminate()
-        _sim_stepper_process = launch_sim_stepper()
-
-    print("Simulation Restarted with New Resolution!")
-
-    return _sim_stepper_process, GRID_RESOLUTION
+    python_executable = sys.executable
+    return subprocess.Popen([python_executable, os.getcwd() + SIM_STEPPER_LOC])
 
 
 def visualisation_thread():
@@ -160,15 +129,6 @@ def visualisation_thread():
     shm.close()
 
 
-def launch_sim_stepper():
-    """
-    Launches the sim_stepper.py script as a separate process
-    """
-
-    python_executable = sys.executable
-    return subprocess.Popen([python_executable, os.getcwd() + SIM_STEPPER_LOC])
-
-
 def simulation_thread():
     """
     Runs the simulation stepper in a separate thread.
@@ -180,58 +140,34 @@ def simulation_thread():
     sim_stepper_process.wait()
 
 
-def launch_grapher():
-    """
-    Launches the timeseries_grapher.py script as a separate process
-    """
-
-    python_executable = sys.executable
-    return subprocess.Popen([python_executable, os.getcwd() + GRAPHER_LOC])
-
-
-def create_shm_params():
-    global shm_params
-
-    try:
-        shm_params = shared_memory.SharedMemory(PARAMS_BUFFER_NAME)
-    except FileNotFoundError:
-        shm_params = create_shm(PARAMS_BUFFER_NAME, SIM_PARAMS_SIZE * 4)
-
-    return shm_params
-
 shm_params = None
 
 if __name__ == "__main__":
 
-    import params_window
+    import qt_window
 
     fields_shm = create_shm(FIELDS_BUFFER_NAME, int(np.prod(MAX_RES) * 4 * 7))
-    
+
     if not shm_params:
         shm_params = create_shm_params()
 
     file_path_shm = create_shm(FILES_BUFFER_NAME, MAX_FILEPATH_SIZE)
 
     sim_thread = threading.Thread(target=simulation_thread, daemon=True)
+    gui_thread = threading.Thread(target=qt_window.control_panel, daemon=True)
+
     sim_thread.start()
-
-    # grapher_process = launch_grapher()
-
-    # vis_thread = threading.Thread(target=visualisation_thread)
-    # vis_thread.start()
+    gui_thread.start()
 
     try:
-        params_window.control_panel()
         visualisation_thread()
+    except KeyboardInterrupt:        
         destroy_shared_memory(fields_shm)
         destroy_shared_memory(shm_params)
         destroy_shared_memory(file_path_shm)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        sim_stepper_process.terminate()
-        # grapher_process.terminate()
-        destroy_shared_memory(fields_shm)
-        destroy_shared_memory(shm_params)
-        destroy_shared_memory(file_path_shm)
-        print("Simulation stopped, subprocess terminated, and shared memory released.")
+    
+    sim_stepper_process.terminate()
+    destroy_shared_memory(fields_shm)
+    destroy_shared_memory(shm_params)
+    destroy_shared_memory(file_path_shm)
+    print("Simulation stopped, subprocess terminated, and shared memory released.")

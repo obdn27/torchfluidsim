@@ -2,3 +2,8 @@ pygame
 matplotlib
 numpy
 torch
+ipykernel
+
+PyQt6 
+PyQt6-Charts
+pyqtgraph

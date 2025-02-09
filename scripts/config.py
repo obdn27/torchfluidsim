@@ -59,8 +59,8 @@ GRID_RESOLUTION = (BASE_RES, BASE_RES)
 WINDOW_RES = (int(BASE_RES * WINDOW_MULTIPLIER), int(BASE_RES * WINDOW_MULTIPLIER))
 MAX_RES = (2048, 2048)
 
-SIM_STEPPER_LOC = "\\scripts\\sim_stepper.py"
-GRAPHER_LOC = "\\scripts\\timeseries_grapher.py"
+SIM_STEPPER_LOC = "/scripts/sim_stepper.py"
+GRAPHER_LOC = "/scripts/timeseries_grapher.py"
 
 FPS = 60
 MAX_DATA_LEN = 60
