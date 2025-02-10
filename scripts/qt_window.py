@@ -1,163 +1,174 @@
-import sys, os
+import sys
 import numpy as np
-import threading, subprocess
-from multiprocessing import shared_memory
-import time
-import shm_manager
-from sim_stepper import sim_stepper
-
+import threading, time
 from PyQt6.QtWidgets import (
-    QMainWindow, 
+    QMainWindow,
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
-    QListWidget,
     QSlider,
     QLabel,
-    QGraphicsView,
-    QGraphicsScene,
     QSizePolicy,
     QApplication,
+    QPushButton,
+    QFileDialog,
 )
-
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 import pyqtgraph as pg
-
 from config import *
+import matplotlib.pyplot as plt
+
+from sim_stepper import SimulationStepper
+import sim_stepper
+from shm_manager import SharedMemoryManager
 
 
 class VisualisationThread(QThread):
     frame_signal = pyqtSignal(np.ndarray)
 
+    def __init__(self, shm_manager, parent=None):
+        super().__init__(parent)
+        self.shm_manager = shm_manager
+
     def run(self):
+        # Continuously read the fields buffer from shared memory.
         while True:
-            frame = shm_manager.read_shared_memory()
+            frame = self.shm_manager.read_fields()  # returns a copy of the fields buffer
             self.frame_signal.emit(frame)
-            time.sleep(1/60)
+            time.sleep(1 / 60)
 
 
 class ProjectUI(QMainWindow):
-    def __init__(self):
+    def __init__(self, shm_manager):
         super().__init__()
+        self.shm_manager = shm_manager
         self.setGeometry(100, 100, 1200, 600)
-
         self.centralWidget = QWidget()
         self.setCentralWidget(self.centralWidget)
-        layout = QHBoxLayout()
+        # Initialize current_width from grid_width default.
+        self.current_width = SIM_PARAMS_DEFAULTS["grid_width"][0]
 
+        main_layout = QHBoxLayout()
+
+        # Left control panel
         self.control_panel = QWidget()
-        self.setCentralWidget(self.centralWidget)
-        layout = QHBoxLayout()
-
-        # Left sidebar
-        self.control_panel = QWidget()
-        control_layout = QVBoxLayout()
-        self.control_panel.setLayout(control_layout)
-
+        control_layout = QVBoxLayout(self.control_panel)
         self.sliders = {}
+        # Define parameters that you do not want to create sliders for.
+        skip_params = [
+            "mouse_x", "mouse_y", "density_scaling", "dx", "dy",
+            "reset_request", "obstacle_path", "interaction_strength", "interaction_radius"
+        ]
 
+        # Loop over all parameters in SIM_PARAMS_DEFAULTS.
         for param_name, (default_value, minimum, maximum, step) in SIM_PARAMS_DEFAULTS.items():
-
-            if param_name in ["mouse_x", "mouse_y", "density_scaling", "dx", "dy", "reset_request", "obstacle_path", "grid_width", "interaction_strength", "interaction_radius"]:
+            if param_name in skip_params:
                 continue
 
-            scale_factor = 100
-
             slider_layout = QVBoxLayout()
-
             label = QLabel(f"{param_name}: {default_value:.2f}")
-
             slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setMinimum(int(minimum * scale_factor))
-            slider.setMaximum(int(maximum * scale_factor))
-            slider.setValue(int(default_value * scale_factor))
-            slider.setSingleStep(int(step * scale_factor))
-
+            slider.setMinimum(int(minimum / step))
+            slider.setMaximum(int(maximum / step))
+            slider.setValue(int(default_value / step))
+            slider.setSingleStep(int(step / step))
             slider.setFixedWidth(300)
             slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
 
-            def slider_changed(value, param=param_name, scale=scale_factor, lbl=label):
-                float_value = value / scale_factor
-                lbl.setText(f"{param}: {float_value:.2f}")
-                self.update_param(param, float_value)
-
-            slider.valueChanged.connect(lambda val, p=param_name, lbl=label: slider_changed(val, p, lbl=lbl))
-
+            # Bind the slider change event.
+            slider.valueChanged.connect(
+                lambda val, p=param_name, lbl=label, s=step: self._slider_changed(val, p, lbl, s)
+            )
             slider_layout.addWidget(label)
             slider_layout.addWidget(slider)
-
             control_layout.addLayout(slider_layout)
-
             self.sliders[param_name] = slider
 
+        # Obstacle texture file picker.
+        self.file_picker_button = QPushButton("Load Obstacle Texture")
+        self.file_picker_button.clicked.connect(self.get_obstacle_path)
+        control_layout.addWidget(self.file_picker_button)
 
-        # Visualisation feed
+        # Visualisation feed display.
         self.visualisation_label = QLabel()
         self.visualisation_label.setFixedSize(512, 512)
-        layout.addWidget(self.control_panel)
-        layout.addWidget(self.visualisation_label)
+        main_layout.addWidget(self.control_panel)
+        main_layout.addWidget(self.visualisation_label)
 
-        # Right charts
+        # Right charts panel.
         self.charts_panel = QWidget()
-        charts_layout = QVBoxLayout()
-        self.charts_panel.setLayout(charts_layout)
-
+        charts_layout = QVBoxLayout(self.charts_panel)
         self.charts = []
         for _ in range(6):
             plot = pg.PlotWidget()
             plot.setYRange(0, 0.1)
             self.charts.append(plot)
             charts_layout.addWidget(plot)
-        layout.addWidget(self.charts_panel)
+        main_layout.addWidget(self.charts_panel)
 
-        self.centralWidget.setLayout(layout)
+        self.centralWidget.setLayout(main_layout)
 
-        self.visualisation_thread = VisualisationThread()
-        self.visualisation_thread.frame_signal.connect(self.update_visualisation_feed)
-        self.visualisation_thread.start()
+        # Start the visualisation thread.
+        self.vis_thread = VisualisationThread(self.shm_manager)
+        self.vis_thread.frame_signal.connect(self.update_visualisation_feed)
+        self.vis_thread.start()
 
+        # Set up a timer for updating charts.
         self.graph_timer = QTimer()
         self.graph_timer.timeout.connect(self.update_graphs)
         self.graph_timer.start(1000 // 60)
 
-    @staticmethod
-    def update_param(param_name, value):
-        """ Returns a function that updates the shared memory with the new parameter value. """
-        return lambda val: shm_manager.update_simulation_param(param_name, float(val), shm_manager.create_shm_params())
+    def _slider_changed(self, value, param, label, step):
+        float_value = value * step
+        label.setText(f"{param}: {float_value:.2f}")
+        if param == "grid_width":
+            self.current_width = int(float_value)
+        self.update_param(param, float_value)
+        # For debugging: print current field from shared memory.
+        current_field = self.shm_manager.read_params()[SIM_PARAMS["current_field"]]
+        print(f"\t\t current field: {current_field}")
+
+    def update_param(self, param_name, val):
+        self.shm_manager.update_param(param_name, float(val))
+
+    def get_obstacle_path(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Obstacle Texture", "", "Image Files (*.png *.jpg *.jpeg)"
+        )
+        if file_path:
+            self.shm_manager.set_file_path(file_path)
+            print(f"Loaded Obstacle Texture: {file_path}")
 
     def update_visualisation_feed(self, frame):
         H, W, C = frame.shape
         bytes_per_line = C * W
-        q_img = QImage(frame.data, W, H, bytes_per_line, QImage.Format.Format_RGB888)
+        frame_uint8 = (frame * 255).astype(np.uint8)
+        frame_uint8_transposed = np.ascontiguousarray(np.transpose(frame_uint8, (1, 0, 2)))
+        # Use the current_width for both dimensions.
+        q_img = QImage(frame_uint8_transposed.data, self.current_width, self.current_width, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(q_img).scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio)
         self.visualisation_label.setPixmap(pixmap)
 
     def update_graphs(self):
-        """Update charts with real-time data."""
-        # data = process_rgb_for_graphing(read_shared_memory())
-        data = shm_manager.read_shared_memory()
+        data = self.shm_manager.read_fields()
         for i, plot in enumerate(self.charts):
-            plot.plot([data[i % 3, i % 3, i % 3]], clear=True)
+            # Demo: plot a constant value.
+            plot.plot([0.69], clear=True)
 
-
-def halt_sim_stepper_thread(shm_params):
-    shm_manager.update_simulation_param('run_flag', 1, shm_params)
-
-
-print("qt_window.py running", __name__)
 
 if __name__ == "__main__":
+    # Initialize the shared memory manager.
+    shm_manager_instance = SharedMemoryManager()
 
-    fields_shm, shm_params, file_path_shm = shm_manager.initialize_shm(int(np.prod(MAX_RES) * 4 * 7))
+    # Create and start the simulation stepper in its own thread.
+    sim_instance = SimulationStepper()
+    sim_thread = threading.Thread(target=sim_instance.run, daemon=True)
 
-    sim_thread = threading.Thread(target=sim_stepper, daemon=True)
+    # sim_thread = threading.Thread(target=sim_stepper.test, daemon=True)
     sim_thread.start()
 
     app = QApplication(sys.argv)
-    window = ProjectUI()
+    window = ProjectUI(shm_manager_instance)
     window.show()
     sys.exit(app.exec())
-
-    halt_sim_stepper_thread(shm_params)
-

@@ -85,7 +85,7 @@ def restart_simulation(new_width, new_height, _sim_stepper_process=None):
     # Update global resolution
     GRID_RESOLUTION = (int(new_height), int(new_width))
 
-    # Store the new resolution in the shared `PARAMS_BUFFER`
+    # Store the new resolution in the shared `PARAMS_B  UFFER`
     update_simulation_param("grid_width", new_width, shm_params)
 
     # Restart only the simulation process (NOT the buffer)

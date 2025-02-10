@@ -1,24 +1,122 @@
 from multiprocessing import shared_memory
 import time
 import torch
-from config import *
-import solvers
+import torch.nn.functional as F
 import numpy as np
-import time
 from PIL import Image
 import matplotlib.pyplot as plt
-import scipy.ndimage
+from config import *
+import solvers
+from shm_manager import SharedMemoryManager
+import shm_manager
 
-print("SIM_STEPPER STARTED", __name__)
 colormap = plt.cm.inferno
-image_tensor = None
+
+
+class SimulationStepper:
+    def __init__(self, shm_manager=None, base_res=BASE_RES, max_res=MAX_RES, fps=FPS):
+        self.base_res = base_res
+        self.max_res = max_res
+        self.fps = fps
+        self.device = "cpu"  # Change as needed (e.g., "cuda" or "mps")
+        self.grid_resolution = (base_res, base_res)
+
+        # Use the provided shared memory manager or create a new one.
+        self.shm_manager = shm_manager if shm_manager is not None else SharedMemoryManager()
+        self._init_shared_memory()
+
+        self.current_frame = torch.zeros(
+            (base_res, base_res, 6),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        self.image_tensor = torch.zeros(
+            (base_res, base_res, 3),
+            device=self.device,
+        )
+        self.obstacle_path = ""
+        self.max_res_frame = torch.zeros((max_res, max_res, 3), device=self.device)
+        solvers.init_solver(self.current_frame)
+
+    def _init_shared_memory(self):
+        # Use the shared memory manager’s buffers.
+        self.vis_buffer = torch.from_numpy(self.shm_manager.fields_buffer.buffer).to(self.device)
+        self.params_buffer = self.shm_manager.sim_params.buffer  # NumPy array view (updates immediately)
+        self.filepath_buffer = self.shm_manager.file_path_buffer.buffer  # NumPy array (dtype=uint8)
+
+    def load_obstacle_texture(self, image_path):
+        H, W = self.grid_resolution
+        img = Image.open(image_path).convert("L").resize((W, H))
+        arr = np.array(img)
+        mask = torch.tensor(arr, dtype=torch.float32, device=self.device) / 255.0
+        mask = (mask < 0.5).float()
+        texture = torch.tensor(arr, device=self.device)
+        # Return a binary obstacle mask and a 3-channel image tensor.
+        return 1 - mask.permute(1, 0), texture.permute(1, 0).unsqueeze(-1).expand(-1, -1, 3)
+
+    def update_obstacle_texture(self, new_path):
+        if new_path and new_path != self.obstacle_path:
+            self.current_frame.zero_()
+            self.current_frame[..., 5], self.image_tensor = self.load_obstacle_texture(new_path)
+            self.obstacle_path = new_path
+
+    @staticmethod
+    def normalize_array(arr):
+        mn, mx = torch.min(arr), torch.max(arr)
+        return (arr - mn) / (mx - mn) if mx > mn else torch.zeros_like(arr)
+
+    def process_frame(self, frame, field):
+        # field may come in as a scalar (or 0-dim tensor); convert to int.
+        field = int(field)
+        norm = self.normalize_array(frame[..., field] * frame[..., 5])
+        overlay = self.image_tensor * (1 - frame[..., 5]).unsqueeze(-1).expand_as(self.image_tensor)
+        colored = torch.from_numpy(colormap(norm.cpu())[..., :3])
+
+        return colored + overlay.cpu()
+
+    def pad_frame(self, frame, target_size):
+        target_size = int(target_size)
+        if frame.shape[0] != target_size or frame.shape[1] != target_size:
+            frame = F.interpolate(
+                frame.permute(2, 0, 1).unsqueeze(0),
+                size=(target_size, target_size),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0).permute(1, 2, 0)
+        self.max_res_frame[:target_size, :target_size, :] = frame
+        return self.max_res_frame
+
+    def simulation_step(self):
+        self.current_frame = step_simulation(self.current_frame, self.params_buffer, self.grid_resolution)
+
+    def update_grid_resolution(self):
+        # self.params_buffer is a NumPy array, so use int(...) directly.
+        new_width = int(self.params_buffer[SIM_PARAMS["grid_width"]])
+        if new_width != self.grid_resolution[0]:
+            self.grid_resolution = (new_width, new_width)
+            self.current_frame = torch.zeros(
+                (new_width, new_width, 6), dtype=torch.float32, device=self.device
+            )
+            self.image_tensor = torch.zeros((new_width, new_width, 3), device=self.device)
+            solvers.init_solver(self.current_frame)
+
+    def run(self):
+        while True:
+            # Read the file path from the shared memory file path buffer.
+            raw_path = bytes(self.filepath_buffer[:MAX_FILEPATH_SIZE]).decode("utf-8")
+            new_path = raw_path.strip().strip("\x00")
+            self.update_obstacle_texture(new_path)
+            self.update_grid_resolution()
+            # print("current field", self.params_buffer[SIM_PARAMS["current_field"]])
+            # Uncomment the following lines to perform simulation steps and update the visual buffer:
+            self.simulation_step()
+            proc = self.process_frame(self.current_frame, self.params_buffer[SIM_PARAMS["current_field"]])
+            padded = self.pad_frame(proc, self.params_buffer[SIM_PARAMS["grid_width"]])
+            self.vis_buffer.copy_(padded)
+            time.sleep(1 / self.fps)
+
 
 def step_simulation(current_frame, params, grid_resolution):
-    """
-    Steps the current simulation state forward 1 tick/frame.
-    Uses PyTorch tensors instead of NumPy.
-    """
-
     frame = solvers.interaction_step(
         frame=current_frame,
         interaction_radius=params[SIM_PARAMS["interaction_radius"]],
@@ -32,20 +130,17 @@ def step_simulation(current_frame, params, grid_resolution):
         mouse_acceleration=(params[SIM_PARAMS["dx"]], params[SIM_PARAMS["dy"]]),
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
-
     frame = solvers.add_streamlines(
         frame=frame,
         stream_speed=params[SIM_PARAMS["injection_strength"]],
         stream_spacing=params[SIM_PARAMS["stream_spacing"]],
         stream_thickness=params[SIM_PARAMS["stream_thickness"]],
     )
-
     frame = solvers.advection_step(
         frame=frame,
         dt=params[SIM_PARAMS["simulation_speed"]],
         grid_resolution=grid_resolution,
     )
-
     frame = solvers.diffuse_step(
         frame=frame,
         viscosity=params[SIM_PARAMS["viscosity"]],
@@ -53,184 +148,10 @@ def step_simulation(current_frame, params, grid_resolution):
         decay_rate=params[SIM_PARAMS["decay_rate"]],
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
-
     frame = solvers.hierarchical_projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
         scale_factor=2,
     )
-
     return frame
-
-
-def load_obstacle_texture(image_path, grid_resolution):
-    """
-    Loads an obstacle texture and converts it into a simulation-ready mask.
-
-    Args:
-    - image_path (str): Path to the image file.
-    - grid_resolution (tuple): Simulation grid resolution (H, W).
-
-    Returns:
-    - torch.Tensor: Binary obstacle mask (1 = solid, 0 = fluid).
-    """
-
-    H, W = grid_resolution
-
-    # Load image and convert to grayscale
-    image = Image.open(image_path).convert("L")  # Convert to grayscale
-    image = image.resize((W, H))  # Resize to match simulation resolution
-
-    # Convert image to NumPy and normalize (0-255 -> 0-1)
-    obstacle_mask = torch.tensor(np.array(image), dtype=torch.float32) / 255.0
-
-    # Threshold the mask (0 = solid obstacle, 1 = fluid)
-    obstacle_mask = (obstacle_mask < 0.5).float()
-
-    return 1 - obstacle_mask.permute(1, 0), torch.tensor(np.array(image)).permute(1, 0).unsqueeze(-1).expand(-1, -1, 3)
-
-
-def checkload_obstacle_texture(frame, old_path, new_path, grid_resolution):
-
-    global image_tensor
-
-    if old_path != new_path and new_path != "":
-        frame[...] = 0
-        frame[..., 5], image_tensor = load_obstacle_texture(new_path, grid_resolution=grid_resolution)
-        print("filepath string:", new_path)
-
-    return frame
-
-
-def process_frame(frame, field):
-
-    def normalize_array(arr):
-        min_val = torch.min(arr)
-        max_val = torch.max(arr)
-        return (arr - min_val) / (max_val - min_val) if max_val > min_val else torch.zeros_like(arr)
-
-    field = int(field.item())
-    result = normalize_array(frame[..., field] * frame[..., 5])
-
-    image_overlay = (image_tensor * (1 - frame[..., 5]).unsqueeze(-1).expand(-1, -1, 3))
-
-    result = colormap(result)
-    result = apply_bloom(result, 0.6)
-
-    return torch.tensor(result)[..., :3] + image_overlay
-
-
-def apply_bloom(image, threshold=0.6, blur_radius=10, intensity=0.5):
-    """
-    Applies a bloom effect to an HxWx4 RGBA image array.
-    
-    Parameters:
-    - image (np.ndarray): HxWx4 image array with values in [0, 1].
-    - threshold (float): Intensity threshold for bloom (0-1).
-    - blur_radius (int): Radius of Gaussian blur.
-    - intensity (float): How strong the bloom effect is when blended back.
-    
-    Returns:
-    - np.ndarray: Image with bloom effect.
-    """
-    # Extract RGB channels (ignore alpha for bloom calculation)
-    rgb = image[..., :3]
-
-    # Convert to grayscale intensity
-    grayscale = np.mean(rgb, axis=-1, keepdims=True)
-    
-    # Extract bright areas
-    bright_areas = np.where(grayscale > threshold, rgb, np.zeros_like(rgb))
-    
-    # Apply Gaussian blur to each RGB channel
-    blurred = np.stack([scipy.ndimage.gaussian_filter(bright_areas[..., i], blur_radius) for i in range(3)], axis=-1)
-    
-    # Blend with original image
-    result_rgb = np.clip(rgb + intensity * blurred, 0, 1)
-
-    # Preserve alpha channel
-    result = np.concatenate([result_rgb, image[..., 3:4]], axis=-1)  # Append alpha back
-
-    return result
-
-
-def pad_frame(frame, max_res_frame, width):
-
-    global image_tensor
-    width = int(int(width))
-
-    if frame.shape != torch.Size([width, width, 3]):
-        # User must have changed grid resolution
-        sim_stepper((width, width))
-    
-    max_res_frame[:width, :width, :] = frame
-    return max_res_frame
-
-
-def sim_stepper():
-    """
-    Runs the simulation stepper, using PyTorch tensors for computations.
-    Writes only the density field (single-channel) to shared memory for visualization.
-    """
-
-    global image_tensor
-
-    # print("Starting sim_stepper")
-
-    vis_shm = shared_memory.SharedMemory(name=FIELDS_BUFFER_NAME)
-    vis_buffer_np = np.ndarray((*MAX_RES, 3), dtype=np.float32, buffer=vis_shm.buf)
-    vis_buffer = torch.from_numpy(vis_buffer_np).to('cuda' if torch.cuda.is_available() else 'cpu')
-
-    params_shm = shared_memory.SharedMemory(name=PARAMS_BUFFER_NAME)
-    params_np = np.ndarray((SIM_PARAMS_SIZE,), dtype=np.float32, buffer=params_shm.buf)
-    params_buffer = torch.from_numpy(params_np).to('cuda' if torch.cuda.is_available() else 'cpu')
-
-    filepath_shm = shared_memory.SharedMemory(FILES_BUFFER_NAME)
-    new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
-    new_path = ''.join(c for c in new_path if ord(c) != 0)
-
-    grid_resolution = GRID_RESOLUTION
-
-    image_tensor = torch.zeros((*grid_resolution, 3))
-
-    # Creates empty 6-channel frame with channels corresponding to (density, xvel, yvel, divergence, pressure, obstacle)
-    current_frame = torch.zeros((*grid_resolution, 6), dtype=torch.float32, device=vis_buffer.device)
-
-    old_path = ""
-
-    current_frame = checkload_obstacle_texture(current_frame, old_path, new_path, grid_resolution)
-
-    lasttime = time.time()
-
-    max_res_frame = torch.zeros((*MAX_RES, 3))
-
-    solvers.init_solver(current_frame)
-
-    while True:
-
-        new_path = bytes(filepath_shm.buf[:MAX_FILEPATH_SIZE]).decode('utf-8').strip()
-        new_path = ''.join(c for c in new_path if ord(c) != 0)
-
-        current_frame = checkload_obstacle_texture(current_frame, old_path, new_path, grid_resolution)
-
-        next_frame = step_simulation(current_frame, params_buffer, grid_resolution)
-
-        processed_frame = process_frame(next_frame, params_buffer[SIM_PARAMS["current_field"]])
-        padded_frame = pad_frame(processed_frame, max_res_frame, params_buffer[SIM_PARAMS["grid_width"]])
-
-        vis_buffer.copy_(padded_frame)  # Copy processed frame depending on which field the user has selected
-
-        time.sleep(1 / FPS)
-
-        old_path = new_path
-        current_frame = next_frame.clone()
-
-        currenttime = time.time()
-
-        # print(f"{(currenttime - lasttime) * 1000:.2f}ms")
-        lasttime = currenttime
-
-
-if __name__ == "__main__":
-    sim_stepper()

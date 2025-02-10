@@ -33,14 +33,14 @@ SIM_PARAMS_DEFAULTS = {
     "mouse_y": (0, 0, 0, 0),
     "dx": (0, 0, 0, 0),
     "dy": (0, 0, 0, 0),
-    "reset_request": (0.0, 0.0, 0.0, 0.0),
+    "reset_request": (1.0, 1.0, 1.0, 1.0),
     "over_relaxation": (1.8, 0.1, 2.3, 0.1),
     "injection_strength": (45, 0, 250, 5),
     "stream_spacing": (8.0, 2.0, 32.0, 4),
     "stream_thickness": (4, 2, 8, 2),
     "viscosity": (0.01, 0, 3, 0.05),
     "diffusion_coeff": (0.01, 0, 3, 0.05),
-    "current_field": (4, 0, 5, 1),
+    "current_field": (0, 0, 5, 1),
     "grid_width": (128, 64, 2048, 64),
 }
 
@@ -57,7 +57,7 @@ WINDOW_MULTIPLIER = 6
 
 GRID_RESOLUTION = (BASE_RES, BASE_RES)
 WINDOW_RES = (int(BASE_RES * WINDOW_MULTIPLIER), int(BASE_RES * WINDOW_MULTIPLIER))
-MAX_RES = (2048, 2048)
+MAX_RES = 2048
 
 SIM_STEPPER_LOC = "/scripts/sim_stepper.py"
 GRAPHER_LOC = "/scripts/timeseries_grapher.py"
