@@ -1,3 +1,4 @@
+from collections import deque
 import sys
 import numpy as np
 import threading, time
@@ -32,7 +33,6 @@ class VisualisationThread(QThread):
         self.shm_manager = shm_manager
 
     def run(self):
-        # Continuously read the fields buffer from shared memory.
         while True:
             frame = self.shm_manager.read_fields()  # returns a copy of the fields buffer
             self.frame_signal.emit(frame)
@@ -46,7 +46,6 @@ class ProjectUI(QMainWindow):
         self.setGeometry(100, 100, 1200, 600)
         self.centralWidget = QWidget()
         self.setCentralWidget(self.centralWidget)
-        # Initialize current_width from grid_width default.
         self.current_width = SIM_PARAMS_DEFAULTS["grid_width"][0]
 
         main_layout = QHBoxLayout()
@@ -102,12 +101,15 @@ class ProjectUI(QMainWindow):
         self.charts = []
         for _ in range(6):
             plot = pg.PlotWidget()
-            plot.setYRange(0, 0.1)
+            plot.setYRange(0, 1)
             self.charts.append(plot)
             charts_layout.addWidget(plot)
         main_layout.addWidget(self.charts_panel)
 
         self.centralWidget.setLayout(main_layout)
+
+        self.metric_series = [deque(maxlen=100) for _ in range(6)]
+        self.curve = [plot.plot([]) for plot in self.charts]
 
         # Start the visualisation thread.
         self.vis_thread = VisualisationThread(self.shm_manager)
@@ -151,10 +153,24 @@ class ProjectUI(QMainWindow):
         self.visualisation_label.setPixmap(pixmap)
 
     def update_graphs(self):
-        data = self.shm_manager.read_fields()
-        for i, plot in enumerate(self.charts):
-            # Demo: plot a constant value.
-            plot.plot([0.69], clear=True)
+        data = self.shm_manager.read_fields()[:self.current_width, :self.current_width, :]
+        xvel = data[:, :, 0]
+        yvel = data[:, :, 1]
+        pressure = data[:, :, 2]
+
+        metrics = [
+            float(xvel.mean()),
+            float(xvel.std()),
+            float(yvel.mean()),
+            float(yvel.std()),
+            float(pressure.mean()),
+            float(pressure.std()),
+        ]
+
+        for i in range(6):
+            self.metric_series[i].append(metrics[i])
+            self.curve[i].setData(list(self.metric_series[i]))
+            self.charts[i].setYRange(0, max(self.metric_series[i]) * 1.5)
 
 
 if __name__ == "__main__":

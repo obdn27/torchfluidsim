@@ -107,8 +107,6 @@ class SimulationStepper:
             new_path = raw_path.strip().strip("\x00")
             self.update_obstacle_texture(new_path)
             self.update_grid_resolution()
-            # print("current field", self.params_buffer[SIM_PARAMS["current_field"]])
-            # Uncomment the following lines to perform simulation steps and update the visual buffer:
             self.simulation_step()
             proc = self.process_frame(self.current_frame, self.params_buffer[SIM_PARAMS["current_field"]])
             padded = self.pad_frame(proc, self.params_buffer[SIM_PARAMS["grid_width"]])
@@ -154,4 +152,7 @@ def step_simulation(current_frame, params, grid_resolution):
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
         scale_factor=2,
     )
+
+    # print("after stepping", frame.device)
+
     return frame
