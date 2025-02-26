@@ -39,7 +39,7 @@ class VisualisationThread(QThread):
             time.sleep(1 / 60)
 
 
-class ProjectUI(QMainWindow):
+class SimulationUI(QMainWindow):
     def __init__(self, shm_manager):
         super().__init__()
         self.shm_manager = shm_manager
@@ -185,6 +185,6 @@ if __name__ == "__main__":
     sim_thread.start()
 
     app = QApplication(sys.argv)
-    window = ProjectUI(shm_manager_instance)
+    window = SimulationUI(shm_manager_instance)
     window.show()
     sys.exit(app.exec())

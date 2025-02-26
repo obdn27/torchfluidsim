@@ -18,7 +18,7 @@ class SimulationStepper:
         self.base_res = base_res
         self.max_res = max_res
         self.fps = fps
-        self.device = "cpu"  # Change as needed (e.g., "cuda" or "mps")
+        self.device = "mps"  # Change as needed (e.g., "cuda" or "mps")
         self.grid_resolution = (base_res, base_res)
 
         # Use the provided shared memory manager or create a new one.
@@ -40,7 +40,7 @@ class SimulationStepper:
 
     def _init_shared_memory(self):
         # Use the shared memory manager’s buffers.
-        self.vis_buffer = torch.from_numpy(self.shm_manager.fields_buffer.buffer).to(self.device)
+        self.vis_buffer = torch.from_numpy(self.shm_manager.fields_buffer.buffer).cpu()
         self.params_buffer = self.shm_manager.sim_params.buffer  # NumPy array view (updates immediately)
         self.filepath_buffer = self.shm_manager.file_path_buffer.buffer  # NumPy array (dtype=uint8)
 
@@ -90,7 +90,6 @@ class SimulationStepper:
         self.current_frame = step_simulation(self.current_frame, self.params_buffer, self.grid_resolution)
 
     def update_grid_resolution(self):
-        # self.params_buffer is a NumPy array, so use int(...) directly.
         new_width = int(self.params_buffer[SIM_PARAMS["grid_width"]])
         if new_width != self.grid_resolution[0]:
             self.grid_resolution = (new_width, new_width)
@@ -110,7 +109,7 @@ class SimulationStepper:
             self.simulation_step()
             proc = self.process_frame(self.current_frame, self.params_buffer[SIM_PARAMS["current_field"]])
             padded = self.pad_frame(proc, self.params_buffer[SIM_PARAMS["grid_width"]])
-            self.vis_buffer.copy_(padded)
+            self.vis_buffer.copy_(padded.cpu(), non_blocking=True)
             time.sleep(1 / self.fps)
 
 
@@ -152,7 +151,5 @@ def step_simulation(current_frame, params, grid_resolution):
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
         scale_factor=2,
     )
-
-    # print("after stepping", frame.device)
 
     return frame

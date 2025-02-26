@@ -39,7 +39,7 @@ def interaction_step(frame, interaction_radius, interaction_strength, injection_
         y_vel = y_vel + (mouse_acceleration[1] * falloff) * interaction_strength
         density = density + (100.0 * falloff * dt) * interaction_strength
 
-    updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure, obstacle], dim=-1)
+    updated_frame = torch.stack([density, x_vel, y_vel, divergence, pressure, obstacle], dim=-1).to(frame.device)
 
     return updated_frame
 
