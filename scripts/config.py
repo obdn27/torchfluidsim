@@ -50,7 +50,7 @@ FIELDS_BUFFER_NAME = "fields_buffer"
 PARAMS_BUFFER_NAME = "params_buffer"
 FILES_BUFFER_NAME = "files_buffer"
 
-MAX_FILEPATH_SIZE = 256     # Max file path size in bytes
+MAX_FILEPATH_SIZE = 256     # bytes, not chars
 
 BASE_RES = 128
 WINDOW_MULTIPLIER = 6
@@ -64,3 +64,6 @@ GRAPHER_LOC = "/scripts/timeseries_grapher.py"
 
 FPS = 60
 MAX_DATA_LEN = 60
+MAX_METRICS_LEN = 60 * 60 * 60
+
+METRICS_STORE_LOC = "sim_run.npz"

@@ -9,8 +9,22 @@ from config import *
 import solvers
 from shm_manager import SharedMemoryManager
 import shm_manager
+import time
 
 colormap = plt.cm.inferno
+
+
+def detect_device():
+    if torch.cuda.is_available():
+        # Check if ROCm is enabled within the CUDA runtime
+        if torch.version.hip is not None:
+            return "hip"  # This is how PyTorch refers to ROCm
+        else:
+            return "cuda"
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return "mps"
+    else:
+        return "cpu"
 
 
 class SimulationStepper:
@@ -18,7 +32,8 @@ class SimulationStepper:
         self.base_res = base_res
         self.max_res = max_res
         self.fps = fps
-        self.device = "mps"  # Change as needed (e.g., "cuda" or "mps")
+        self.device = detect_device()
+
         self.grid_resolution = (base_res, base_res)
 
         # Use the provided shared memory manager or create a new one.
@@ -36,7 +51,8 @@ class SimulationStepper:
         )
         self.obstacle_path = ""
         self.max_res_frame = torch.zeros((max_res, max_res, 3), device=self.device)
-        solvers.init_solver(self.current_frame)
+        
+        self.solver = solvers.Solver(self.current_frame)
 
     def _init_shared_memory(self):
         # Use the shared memory manager’s buffers.
@@ -54,11 +70,17 @@ class SimulationStepper:
         # Return a binary obstacle mask and a 3-channel image tensor.
         return 1 - mask.permute(1, 0), texture.permute(1, 0).unsqueeze(-1).expand(-1, -1, 3)
 
-    def update_obstacle_texture(self, new_path):
-        if new_path and new_path != self.obstacle_path:
-            self.current_frame.zero_()
-            self.current_frame[..., 5], self.image_tensor = self.load_obstacle_texture(new_path)
-            self.obstacle_path = new_path
+    def update_obstacle_texture(self, new_path, check=True):
+
+        if check:
+            if new_path and new_path != self.obstacle_path:
+                pass
+            else:
+                return
+            
+        self.current_frame.zero_()
+        self.current_frame[..., 5], self.image_tensor = self.load_obstacle_texture(new_path)
+        self.obstacle_path = new_path
 
     @staticmethod
     def normalize_array(arr):
@@ -87,34 +109,41 @@ class SimulationStepper:
         return self.max_res_frame
 
     def simulation_step(self):
-        self.current_frame = step_simulation(self.current_frame, self.params_buffer, self.grid_resolution)
+        self.current_frame = step_simulation(self.solver, self.current_frame, self.params_buffer, self.grid_resolution)
 
     def update_grid_resolution(self):
-        new_width = int(self.params_buffer[SIM_PARAMS["grid_width"]])
+        # new_width = int(self.params_buffer[SIM_PARAMS["grid_width"]])
+        new_width = int(self.shm_manager.read_params()[SIM_PARAMS["grid_width"]])
         if new_width != self.grid_resolution[0]:
+            print("updating grid res")
             self.grid_resolution = (new_width, new_width)
             self.current_frame = torch.zeros(
                 (new_width, new_width, 6), dtype=torch.float32, device=self.device
             )
             self.image_tensor = torch.zeros((new_width, new_width, 3), device=self.device)
-            solvers.init_solver(self.current_frame)
+            self.solver.update_grid_size(self.current_frame)
+            self.update_obstacle_texture(self.shm_manager.get_file_path(), check=False)
 
     def run(self):
         while True:
-            # Read the file path from the shared memory file path buffer.
+            # Read the file path from the shared memory file path buffer
             raw_path = bytes(self.filepath_buffer[:MAX_FILEPATH_SIZE]).decode("utf-8")
             new_path = raw_path.strip().strip("\x00")
+            # Do any required updates
             self.update_obstacle_texture(new_path)
             self.update_grid_resolution()
             self.simulation_step()
             proc = self.process_frame(self.current_frame, self.params_buffer[SIM_PARAMS["current_field"]])
             padded = self.pad_frame(proc, self.params_buffer[SIM_PARAMS["grid_width"]])
+            # Send processed frame to visualisation buffer
             self.vis_buffer.copy_(padded.cpu(), non_blocking=True)
-            time.sleep(1 / self.fps)
 
 
-def step_simulation(current_frame, params, grid_resolution):
-    frame = solvers.interaction_step(
+def step_simulation(solver, current_frame, params, grid_resolution):
+
+    print(f"reading mouse position as {params[SIM_PARAMS["mouse_x"]]}\t\t{params[SIM_PARAMS["mouse_y"]]}")
+
+    frame = solver.interaction_step(
         frame=current_frame,
         interaction_radius=params[SIM_PARAMS["interaction_radius"]],
         interaction_strength=params[SIM_PARAMS["interaction_strength"]],
@@ -124,28 +153,28 @@ def step_simulation(current_frame, params, grid_resolution):
         mouse_y=params[SIM_PARAMS["mouse_y"]],
         grid_resolution=grid_resolution,
         window_res=WINDOW_RES,
-        mouse_acceleration=(params[SIM_PARAMS["dx"]], params[SIM_PARAMS["dy"]]),
+        # mouse_acceleration=(params[SIM_PARAMS["dx"]], params[SIM_PARAMS["dy"]]),
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
-    frame = solvers.add_streamlines(
+    frame = solver.add_streamlines(
         frame=frame,
         stream_speed=params[SIM_PARAMS["injection_strength"]],
         stream_spacing=params[SIM_PARAMS["stream_spacing"]],
         stream_thickness=params[SIM_PARAMS["stream_thickness"]],
     )
-    frame = solvers.advection_step(
+    frame = solver.advection_step(
         frame=frame,
         dt=params[SIM_PARAMS["simulation_speed"]],
         grid_resolution=grid_resolution,
     )
-    frame = solvers.diffuse_step(
+    frame = solver.diffuse_step(
         frame=frame,
         viscosity=params[SIM_PARAMS["viscosity"]],
         diffusion_coeff=params[SIM_PARAMS["diffusion_coeff"]],
         decay_rate=params[SIM_PARAMS["decay_rate"]],
         dt=params[SIM_PARAMS["simulation_speed"]],
     )
-    frame = solvers.hierarchical_projection_step(
+    frame = solver.hierarchical_projection_step(
         frame=frame,
         iterations=params[SIM_PARAMS["solver_iterations"]],
         over_relaxation=params[SIM_PARAMS["over_relaxation"]],
